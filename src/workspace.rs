@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Error, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
 use super::flake::FlakeRef;
 use super::lockfile::LockFile;
 use super::config::{Config, LocalConfig, ProjectConfig};
@@ -19,7 +21,7 @@ pub struct Workspace {
 
 #[derive(Clone)]
 pub struct ProjectRef<'config> {
-    pub flake_ref: FlakeRef,
+    pub flake_ref: Rc<dyn FlakeRef>,
     pub config: &'config ProjectConfig,
     pub editable: bool,
 }
@@ -129,8 +131,8 @@ impl Workspace {
     }
 
     pub fn project(&self, path_or_ref: &str) -> Result<Option<ProjectRef>> {
-        let flake_ref = FlakeRef::parse(path_or_ref)?;
-        if let Some(project_config) = self.config.get_project_by_flake_ref(&flake_ref) {
+        let flake_ref = super::flake::parse(path_or_ref)?;
+        if let Some(project_config) = self.config.get_project_by_flake_ref(flake_ref.clone()) {
             Ok(Some(ProjectRef {
                 flake_ref: flake_ref,
                 config: &project_config,
@@ -181,7 +183,7 @@ impl Workspace {
                     None => &default,
                 }
             };
-            if let Some(input_spec) = strategy.update(&project.flake_ref)? {
+            if let Some(input_spec) = strategy.update(project.flake_ref)? {
                 lock_updates.push((project.config.name.to_string(), input_spec));
             } else {
                 // TODO: Log skipped input here
@@ -189,7 +191,7 @@ impl Workspace {
         }
         let lock = self.lock.get_mut(&e).unwrap();
         for (project_name, input_spec) in lock_updates {
-            lock.update(&e, &project_name, &input_spec)?;
+            lock.update(&project_name, &input_spec)?;
         }
         Ok(())
     }
@@ -239,8 +241,8 @@ mod tests {
         std::fs::create_dir_all(cwd.clone())?;
         let ws = tmp.path().join("a/b/ws.yml");
         std::fs::OpenOptions::new().create(true).write(true).open(ws.clone())?;
-        let root = Workspace::find_root(&cwd)?;
-        assert_eq!(root, ws.parent().unwrap().into());
+        let root = Workspace::find_root(&cwd);
+        assert_eq!(root, Some(ws.parent().unwrap().into()));
         Ok(())
     }
 
@@ -250,7 +252,7 @@ mod tests {
         let cwd = tmp.path().join("a/b/c/d/e");
         std::fs::create_dir_all(cwd.clone())?;
         assert!(
-            Workspace::find_root(&cwd).is_err()
+            Workspace::find_root(&cwd).is_none()
         );
         Ok(())
     }

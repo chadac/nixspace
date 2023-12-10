@@ -11,6 +11,8 @@ mod cli;
 use crate::config::Config;
 use crate::cli::{CliCommand, Git, Nix};
 use crate::workspace::{ProjectRef, Workspace};
+use crate::flake::FlakeRef;
+use crate::lockfile::InputSpec;
 
 use anyhow::{anyhow, bail, Error, Result};
 use clap::{Args, Parser, Subcommand};
@@ -46,9 +48,9 @@ enum Commands {
 
     // PROJECT COMMANDS
     /// import a project to the workspace.
-    Attach(Attach),
+    Register(Register),
     /// erase a project from the workspace.
-    Detach(Detach),
+    Deregister(Deregister),
 
     /// link a project locally into the workspace;
     /// i.e., clone it and make it editable.
@@ -111,7 +113,8 @@ struct Clone {
 
 impl Command for Clone {
     fn run(&self) -> Result<()> {
-        let input_spec = flake::InputSpec::parse(&self.flake_ref)?;
+        let flake_ref = flake::parse(&self.flake_ref)?;
+        let input_spec = InputSpec::from_flake_ref(flake_ref);
         let dest: String = match &self.directory {
             Some(dirname) => dirname.to_string(),
             _ =>
@@ -200,7 +203,7 @@ impl Command for EnvGet {
 }
 
 #[derive(Args, Debug)]
-struct Attach {
+struct Register {
     /// path or reference to the project.
     path_or_ref: String,
     /// name of the directory that the project will be cloned into when added.
@@ -212,7 +215,7 @@ struct Attach {
     edit: bool,
 }
 
-impl Command for Attach {
+impl Command for Register {
     fn run(&self) -> Result<()> {
         let mut ns = Workspace::discover()?;
         let project = match ns.project(&self.path_or_ref)? {
@@ -226,7 +229,7 @@ impl Command for Attach {
             }
         };
         if self.edit {
-            Nix::clone(&project.flake_ref.url, &project.config.path, ".")?;
+            Nix::clone(&project.flake_ref.flake_url(), &project.config.path, ".")?;
             let name = project.config.name.clone();
             ns.mark_editable(&name);
         }
@@ -236,7 +239,7 @@ impl Command for Attach {
 }
 
 #[derive(Args, Debug)]
-struct Detach {
+struct Deregister {
     /// path or reference to the project
     path_or_ref: String,
     #[arg(long)]
@@ -244,7 +247,7 @@ struct Detach {
     delete: bool,
 }
 
-impl Command for Detach {
+impl Command for Deregister {
     fn run(&self) -> Result<()> {
         todo!()
     }
@@ -380,8 +383,8 @@ fn main() -> Result<()> {
         Commands::Config(cmd) => cmd.run(),
         Commands::Env(cmd) => cmd.run(),
 
-        Commands::Attach(cmd) => cmd.run(),
-        Commands::Detach(cmd) => cmd.run(),
+        Commands::Register(cmd) => cmd.run(),
+        Commands::Deregister(cmd) => cmd.run(),
 
         Commands::Link(cmd) => cmd.run(),
         Commands::Unlink(cmd) => cmd.run(),

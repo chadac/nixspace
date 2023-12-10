@@ -2,21 +2,16 @@ use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
-use super::flake::InputSpec;
+use super::flake::FlakeRef;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LockFile {
-    environments: HashMap<String, FlakeLock>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FlakeLock {
     nodes: HashMap<String, LockedRef>,
     root: String,
     version: i32,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LockedRef {
@@ -25,10 +20,55 @@ struct LockedRef {
     inputs: HashMap<String, String>,
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub enum FlakeType {
+    #[serde(rename = "path")]
+    Path,
+    #[serde(rename = "git")]
+    Git,
+    #[serde(rename = "mercurial")]
+    Mercurial,
+    #[serde(rename = "tarball")]
+    Tarball,
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "gitlab")]
+    GitLab,
+    #[serde(rename = "sourcehut")]
+    SourceHut,
+    #[serde(rename = "flake")]
+    Indirect,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct InputSpec {
+    #[serde(rename = "type")]
+    pub flake_type: FlakeType,
+    #[serde(rename = "narHash")]
+    pub nar_hash: Option<String>,
+    pub url: Option<String>,
+    pub owner: Option<String>,
+    pub repo: Option<String>,
+    pub dir: Option<String>,
+    pub rev: Option<String>,
+    #[serde(rename = "ref")]
+    pub git_ref: Option<String>,
+    #[serde(rename = "revCount")]
+    pub rev_count: Option<i64>,
+    #[serde(rename = "lastModified")]
+    pub last_modified: Option<i64>,
+}
 
 impl LockFile {
+    /// Generate an empty lockfile
     pub fn empty() -> Self {
-        todo!()
+        Self {
+            nodes: HashMap::new(),
+            root: "root".to_string(),
+            version: 7,
+        }
     }
 
     pub fn read(path: &Path) -> Result<Self> {
@@ -45,13 +85,35 @@ impl LockFile {
         todo!()
    }
 
-    pub fn update(&mut self, env: &str, name: &str, new_input_spec: &InputSpec) -> Result<()> {
-        let e = self.environments.get_mut(env)
-            .ok_or(anyhow!("could not find environment '{}'", env))?;
-        let p = e.nodes.get_mut(name)
+    pub fn update(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
+        let p = self.nodes.get_mut(name)
             .ok_or(anyhow!("could not find project '{}'", name))?;
         p.locked = new_input_spec.clone();
         Ok(())
+    }
+}
+
+impl InputSpec {
+    pub fn from_flake_ref(flake_ref: Rc<dyn FlakeRef>) -> Self {
+        flake_ref.input_spec()
+        // let args = flake_ref.args().into_iter().collect::<HashMap<String, String>>();
+        // InputSpec {
+        //     flake_type: flake_ref.flake_type.clone(),
+        //     nar_hash: None,
+        //     url: Some(flake_ref.url().to_string()),
+        //     owner: flake_ref.owner(),
+        //     repo: flake_ref.repo(),
+        //     dir: flake_ref.arg("dir"),
+        //     rev: flake_ref.arg("rev"),
+        //     git_ref: Some(flake_ref.arg("ref").unwrap_or("HEAD".to_string())),
+        //     rev_count: None,
+        //     last_modified: None,
+        // }
+    }
+
+    /// Generate FlakeRef from InputSpec
+    pub fn flake_ref(&self) -> Rc<dyn FlakeRef> {
+        todo!()
     }
 }
 

@@ -3,8 +3,10 @@ use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Error, Result};
 use glob_match::glob_match;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use super::flake::{FlakeRef, InputSpec};
+use super::flake::FlakeRef;
+use super::lockfile::InputSpec;
 use super::cli::{CliCommand, Git, Nix};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -47,14 +49,18 @@ pub struct LocalConfig {
 }
 
 impl UpdateStrategy {
-    pub fn update(&self, flake_ref: &FlakeRef) -> Result<Option<InputSpec>> {
-        let remote_url = flake_ref.remote_url();
-        if let Some(rev) = self.get_latest_rev(&remote_url)? {
-            let flake_url = flake_ref.to_flake_url(Some(&rev));
-            let hash = Nix::flake_prefetch(&flake_url)?.hash;
-            Ok(Some(flake_ref.to_input_spec(&rev, &hash)))
-        }
-        else {
+    pub fn update(&self, flake_ref: Rc<dyn FlakeRef>) -> Result<Option<InputSpec>> {
+        if let Some(remote_url) = flake_ref.git_remote_url() {
+            if let Some(rev) = self.get_latest_rev(&remote_url)? {
+                let hash = Nix::flake_prefetch(&flake_ref.flake_url())?.hash;
+                let mut input_spec = InputSpec::from_flake_ref(flake_ref);
+                input_spec.rev = Some(rev);
+                input_spec.nar_hash = Some(hash);
+                Ok(Some(input_spec))
+            } else {
+                Ok(None)
+            }
+        } else {
             Ok(None)
         }
     }
@@ -126,12 +132,12 @@ impl Config {
 
     pub fn add_project<P: AsRef<Path> + ?Sized>(
         &mut self,
-        flake_ref: &FlakeRef,
+        flake_ref: &dyn FlakeRef,
         path: &P,
         name: Option<String>,
     ) -> Result<&ProjectConfig> {
         let n = name.unwrap_or(
-            flake_ref.repo().ok_or(
+            flake_ref.arg("repo").ok_or(
                 anyhow!("could not infer a good project name to use.")
             )?
         );
@@ -139,28 +145,30 @@ impl Config {
         pb.push(path);
         self.projects.push(ProjectConfig {
             name: n.to_string(),
-            url: flake_ref.url.to_string(),
+            url: flake_ref.flake_url(),
             path: pb,
             strategy: None,
         });
         Ok(self.projects.last().unwrap())
     }
 
-    pub fn rm_project(&mut self, flake_ref: &FlakeRef) -> Result<ProjectConfig> {
-        let index = self.projects.iter().position(|x| x.url == flake_ref.url).ok_or(
-            anyhow!("project with url '{}' not found", flake_ref.url)
+    pub fn rm_project(&mut self, flake_ref: &dyn FlakeRef) -> Result<ProjectConfig> {
+        let index = self.projects.iter().position(|x| x.url == flake_ref.flake_url()).ok_or(
+            anyhow!("project with ref '{}' not found", flake_ref.flake_url())
         )?;
         Ok(self.projects.remove(index))
     }
 
-    pub fn get_project_by_flake_ref(&self, flake_ref: &FlakeRef) -> Option<&ProjectConfig> {
+    pub fn get_project_by_flake_ref(&self, flake_ref: Rc<dyn FlakeRef>) -> Option<&ProjectConfig> {
         todo!()
     }
 }
 
 impl LocalConfig {
     pub fn new() -> Self {
-        todo!()
+        LocalConfig {
+            projects: HashMap::new(),
+        }
     }
 
     pub fn read(path: &Path) -> Result<Self> {
@@ -187,26 +195,29 @@ mod tests {
     fn test_deserialize() {
         let config = Config {
             environments: HashMap::from([
-                ("dev".to_string(), EnvConfig { strategy: UpdateStrategy::LATEST, }),
-                ("stage".to_string(), EnvConfig { strategy: UpdateStrategy::FREEZE, }),
+                ("dev".to_string(), EnvConfig { strategy: UpdateStrategy::Latest, }),
+                ("stage".to_string(), EnvConfig { strategy: UpdateStrategy::Freeze, }),
                 ("prod".to_string(), EnvConfig {
-                    strategy: UpdateStrategy::TAG(Some("release-*".to_string())),
+                    strategy: UpdateStrategy::LatestTag(Some("release-*".to_string())),
                 }),
             ]),
             projects: Vec::from([
                 ProjectConfig {
+                    name: "project-a".to_string(),
                     url: "github:chadac/project-a".to_string(),
-                    path: "./project-a".to_string(),
+                    path: PathBuf::from("./project-a"),
                     strategy: None,
                 },
                 ProjectConfig {
+                    name: "project-b".to_string(),
                     url: "github:chadac/project-b".to_string(),
-                    path: "./subfolder/project-b".to_string(),
+                    path: PathBuf::from("./subfolder/project-b"),
                     strategy: Some(HashMap::from([
-                        ("stage".to_string(), UpdateStrategy::FREEZE),
+                        ("stage".to_string(), UpdateStrategy::Freeze),
                     ])),
                 },
             ]),
+            default_env: "dev".to_string(),
         };
         let repr = serde_yaml::to_string(&config).unwrap();
         println!("{}", repr);
