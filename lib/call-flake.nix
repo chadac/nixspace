@@ -1,10 +1,11 @@
-# Based on https://github.com/NixOS/nix/blob/c0c7c4b6cd1aefaa65fc11fcdc8df7e608960825/src/libexpr/flake/call-flake.nix
+# from: https://github.com/NixOS/nix/blob/c0c7c4b6cd1aefaa65fc11fcdc8df7e608960825/src/libexpr/flake/call-flake.nix
 #
 # MODIFICATIONS
 #
 # 2023-11-08(chad@cacrawford.org): modified to include overrides from a workspace
+#
 
-wsNodes: lockFileStr: rootSrc: rootSubdir:
+overrides: lockFileStr: rootSrc: rootSubdir:
 
 let
   lockFile = builtins.fromJSON lockFileStr;
@@ -17,8 +18,8 @@ let
           sourceInfo =
             if key == lockFile.root
             then rootSrc
-            else if wsNodes ? key
-            then wsNodes.${key}
+            else if overrides ? key
+            then overrides.${key}
             else fetchTree (node.info or {} // removeAttrs node.locked ["dir"]);
 
           subdir = if key == lockFile.root then rootSubdir else node.locked.dir or "";

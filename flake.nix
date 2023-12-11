@@ -28,9 +28,9 @@
       systems = defaultSystems;
 
       perSystem = { pkgs, ... }: let
-        nix-ws = pkgs.callPackage ./. { };
+        nixspace = pkgs.callPackage ./. { };
       in {
-        packages.default = nix-ws;
+        packages.default = nixspace;
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rustc

@@ -2,14 +2,14 @@
 {
   src,
   inputs,
-  cfgFile ? src + "/workspace.toml",
-  lockFile ? src + "/workspace.lock",
-  localLockFile ? src + "/.workspace/local.lock",
+  cfgFile ? src + "/nixspace.yml",
+  lockFile ? src + "/.nixspace/dev.lock",
+  localFile ? src + "/.nixspace/nixspace.local",
   systems ? defaultSystems,
 }: module: let
-  cfg = builtins.fromTOML (builtins.readFile cfgFile);
+  cfg = builtins.fromYAML (builtins.readFile cfgFile);
   lock = builtins.fromJSON (builtins.readFile lockFile);
-  local = builtins.fromJSON (builtins.readFile localLockFile);
+  local = builtins.fromYAML (builtins.readFile localFile);
   projects = builtins.mapAttrs (name: inputSpec:
     if local.${name}
     then builtins.getTree { path = "path:./" + src + cfg.${name}.path; }
@@ -19,7 +19,7 @@
     inputs
     // (
       builtins.mapAttrs (tree: let
-        lockFileStr = builtins.readFile (src + "/flake.lock");
+       lockFileStr = builtins.readFile (src + "/flake.lock");
         rootSrc = tree.outPath;
       in
         callFlake wsNodes lockFileStr rootSrc ""

@@ -1,19 +1,65 @@
-# nix-ws
+# nixspace
 
-Manage projects composed of multiple Nix packages inside a single
-workspace. Useful for building manyrepo apps, testing entire
-applications end-to-end to anticipate needs or side-effects from other
-components, and for reproducible joint deployments.
+`nixspace` is a Nix Flake-based workspace manager for manyrepo
+projects. Similar to `npm` workspaces, `nixspace` enables developers
+to:
 
-`nix-ws` is like `npm` workspaces but for any Nix expression. You'll
-end up with a workspace that look like:
+* Seamlessly work on multiple projects;
+* Test projects in integration with ease; and
+* Deploy the application in a unified fashion, ensuring that you have
+  locked the entire state of your ecosystem down to the commit of
+  every project used.
+
+Unlike `npm` workspaces, `nixspace`s are Flake-based and are thus more
+flexible:
+
+* Supports both monorepo and manyrepo development styles;
+* Is unopinionated about programming language. It can be used to host
+  projects under any number of languages; and
+* Can be used to perform joint deployments of applications, ensuring
+  that the workspace corresponds exactly to the external state.
+
+## Features
+
+* *Lockfiles*: Track the exact commit of every project in the
+  workspace with a lockfile, formatted identically to the `flake.lock`.
+* *Environments*: Workspaces can be used to lock the state of multiple
+  deployment environments for environments that track rolling upgrades.
+* *Customized upgrades*: Specify on a project level how upgrades are
+  consumed (follow branches, latest tags, semver, etc).
+* *Space-efficient*: Unlike `git` submodules, `nixspace` doesn't
+  require cloning down every project in a workspace. Developers can
+  `add` the projects they'd like to work on and test them in
+  integration in the workspace without pulling down all
+  packages. `nixspace` can scale to track the state of thousands of
+  applications at once.
+* *Composable dev environments*: `nixspace`s allow developers to
+  seamlessly compose the development environments of multiple projects
+  together.
+
+## How it works
+
+`nixspace` is made of two components:
+
+1. A Nix library for managing multi-Flake projects. This library helps
+   manage automatically detecting and substituting `passthru`'s in
+   inputs and makes it easy to test changes on the consumers of a
+   package. (i.e., does application Y's unit tests still pass when I
+   update library X?)
+2. A CLI utility for managing the nixspace. This includes convenience
+   utilities for maintaining and updating workspace lockfiles, as well as
+   making it simple to edit any projects in the `nixspace`.
+
+A standard nixspace looks like:
 
     .
-    ├── flake.nix              The workspace flake.nix
+    ├── flake.nix              The nixspace flake.nix
     ├── flake.lock             Flake lockfile
-    ├── workspace.toml         Workspace configuration
-    ├── workspace.lock         Tracks the version of all projects used.
-    ├── .workspace-local.lock  Used for tracking differences between local and remote workspaces.
+    ├── nixspace.yml           Nixspace configuration
+    ├── .nixspace
+    |   ├── prod.lock          Nixspace package lockfile (formatted like a standard Flake lockfile)
+    |   ├── dev.lock           Nixspaces can manage multiple environments
+    |   ├── nixspace.local     Used for tracking differences between local and remote workspaces.
     ├── project-a              One of many Nix projects
     |   ├── flake.nix
     ├── project-b
@@ -22,51 +68,9 @@ end up with a workspace that look like:
     |   ├── project-c
     |   |   ├── flake.nix
 
-It has some additional capabilities, such as the ability to compose
-many [numtide/devshell](https://github.com/numtide/devshell)'s
-together to build a joint dev shell for a project.
-
-## Why?
-
-Building complex multi-project applications is a pain. Since each
-project tends to be deployed inside its own CI pipeline and those
-changes can propagate slowly, it's hard to track the exact version of
-each project that is currently deployed at a single point in
-time. This creates several issues:
-
-1. Reproducing issues is a pain since it's hard to model interactions
-   between services locally;
-1. It's hard to anticipate side effects for new changes to libraries or
-   services with downstream dependencies; and
-1. There's additional management cruft such as unnecessary versioning
-   libraries/services, coordinating deployments of multiple
-   repositories at once, specialized logic about holding back specific
-   services, etc.
-
-## How it works
-
-`nix-ws` creates reproducible workspaces that allow you to lock a
-multi-project application down to the commit level per
-project. Developers can clone and edit sub-projects, make changes, and
-test how those changes would impact other packages in the workspace.
-
-Your workspace configuration is tracked within three files:
-
-1. `workspace.toml`: Your workspace configuration. Specifies which Git
-   projects you are working on and what path they would be cloned to
-   locally within the workspace.
-2. `workspace.lock`: A git-committed file that locks down each project
-   similar to a `flake.lock`. Workspaces layer on some additional
-   logic to set up the proper `follows` links between projects, so
-   that only one instance of each flake exists in the workspace.
-3. `.workspace/local.lock`: An untracked file which allows the
-   developer to diverge from the global `workspace.lock`. This would
-   include pulling down later versions of all packages, cloning local
-   copies and using those, etc.
-
 ## Installation
 
-    nix shell github:chadac/nix-ws
+    nix shell github:chadac/nixspace
 
 ## Usage
 
@@ -74,21 +78,21 @@ Your workspace configuration is tracked within three files:
 
 Start a new workspace in an empty folder with:
 
-    nix flake init github:chadac/nix-ws
+    nix flake init github:chadac/nixspace
 
 You may also run
 
-    nix-ws init
+    nixspace init
 
 ### Adding
 
 Add new packages with:
 
-    nix-ws add github:my/project
+    nixspace add github:my/project
 
-`nix-ws` scans the project for any co-dependencies and will
+`nixspace` scans the project for any co-dependencies and will
 automatically update the `workspace.toml` to properly follow any
-dependencies, so if `project-b` depends on `project-a`, `nix-ws` will
+dependencies, so if `project-b` depends on `project-a`, `nixspace` will
 properly set up `project-b.inputs.project-a.follows = "project-b"`.
 
 ### Sharing
@@ -96,32 +100,32 @@ properly set up `project-b.inputs.project-a.follows = "project-b"`.
 Workspaces are git repositories, so if you commit and push the
 workspace, then others can clone it with:
 
-    nix-ws clone github:my/workspace
+    nixspace clone github:my/workspace
 
 #### Initializing projects
 
-By default, `nix-ws` clones all projects as stubs -- which means that
+By default, `nixspace` clones all projects as stubs -- which means that
 while they are built and tested, they aren't directly editable until
 you explicitly **use** them.
 
 You can initialize a project in a workspace with
 
-    nix-ws use project-a
+    nixspace use project-a
 
 Syntax follows the expected folder path of the project:
 
-    nix-ws use subfolder/project-c
+    nixspace use subfolder/project-c
 
 If you would like to clone all packages in a workspace in editable
 mode, run
 
-    nix-ws clone github:my/workspace --use-all
+    nixspace clone github:my/workspace --use-all
 
 #### Updating projects
 
 To upgrade your `workspace.lock`, run
 
-    nix-ws update
+    nixspace update
 
 This will update all projects to use the latest available commit.
 
@@ -130,26 +134,26 @@ This will update all projects to use the latest available commit.
 To update all projects in a workspace to use the current versions of
 each project that a workspace tracks, run
 
-    nix-ws sync
+    nixspace sync
 
 If you would like to implicitly update the workspace to follow the
 upstream, you may also run:
 
-    nix-ws sync --remote
+    nixspace sync --remote
 
 #### Combined devshell
 
 If you want a workspace that combines many different devshells, simply
 add to your outputs:
 
-    devshells.default = nix-ws.lib.mergedevshells projects { };
+    devshells.default = nixspace.lib.mergedevshells projects { };
 
 Note that this is built for
 [github:numtide/devshell](https://github.com/numtide/devshell).
 
 ### CI/CD
 
-`nix-ws` projects can be a convenient means of deploying manyrepo
+`nixspace` projects can be a convenient means of deploying manyrepo
 applications in a joint, lockable format that is easy to audit.
 
 For example, with GitLab CI:
@@ -168,10 +172,8 @@ For example, with GitLab CI:
         steps:
             - nix run .#project-c.deploy
 
+## TODO
 
-## Details
-
-`nix-ws` is a small wrapper around flakes with some additional
-utilities to make it easy to work on multiple projects in an
-application at once.
-
+* *Combined merge requests*: It'd be nice if we could automate
+  generating merge requests across multiple repositories and linking
+  them into a single deployment.
