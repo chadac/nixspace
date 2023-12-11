@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -6,7 +6,7 @@ use std::rc::Rc;
 use super::flake::FlakeRef;
 use super::lockfile::LockFile;
 use super::config::{Config, LocalConfig, ProjectConfig};
-use super::cli::{CliCommand, Git};
+use super::cli::{CliCommand, Git, Nix};
 
 static CONFIG_PATH: &str = "nixspace.yml";
 static LOCKFILE_DIR: &str = ".nixspace";
@@ -21,8 +21,8 @@ pub struct Workspace {
 
 #[derive(Clone)]
 pub struct ProjectRef<'config> {
-    pub flake_ref: Rc<dyn FlakeRef>,
     pub config: &'config ProjectConfig,
+    pub flake_ref: Rc<dyn FlakeRef>,
     pub editable: bool,
 }
 
@@ -117,42 +117,142 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn sync(&mut self) -> Result<()> {
-        todo!()
+    fn files(&self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        let mut flake_nix = self.root.clone();
+        flake_nix.push("flake.nix");
+        let mut flake_lock = self.root.clone();
+        flake_lock.push("flake.lock");
+        files.push(flake_nix);
+        files.push(flake_lock);
+        files.push(self.config_path());
+        files.push(self.local_path());
+        for env in self.config.environments() {
+            let mut env_lock = self.root.clone();
+            env_lock.push(format!("{env}.json"));
+            files.push(env_lock);
+        }
+        files
     }
 
+    fn changed(&self) -> Result<bool> {
+        let mut changes = Vec::new();
+        for file in self.files() {
+            if Git::changed(&file)? {
+                changes.push(file);
+            }
+        }
+        Ok(!changes.is_empty())
+    }
+
+    /// Updates workspace configuration and lockfiles with the latest
+    /// available data.
+    pub fn sync(&mut self) -> Result<()> {
+        if self.changed()? {
+            bail!("cannot update workspace due to uncommitted local changes; stash changes in the workspace directory before continuing.")
+        }
+        Git::pull_rebase(&self.root)?;
+        Ok(())
+    }
+
+    /// If true, the core files for the workspace are unchanged.
     pub fn tracks_latest(&self) -> Result<bool> {
-        todo!()
+        let items: Result<Vec<bool>, _> = self.files().iter().map(|f| Git::changed(&f)).collect();
+        items?.iter().map(|a| !a).reduce(|a, b| a && b).context("this should never be empty")
     }
 
     /// pushes any new commits from the workspace
     pub fn publish(&self, force: bool) -> Result<()> {
-        todo!()
+        for file in self.files() {
+            Git::add(&file)?;
+        }
+        // TODO: This should be more descriptive
+        Git::commit("chore: update workspace", &self.root)?;
+        Git::push(&self.root)?;
+        Ok(())
     }
 
-    pub fn project(&self, path_or_ref: &str) -> Result<Option<ProjectRef>> {
-        let flake_ref = super::flake::parse(path_or_ref)?;
-        if let Some(project_config) = self.config.get_project_by_flake_ref(flake_ref.clone()) {
-            Ok(Some(ProjectRef {
-                flake_ref: flake_ref,
-                config: &project_config,
-                editable: self.local.is_editable(&project_config.name),
-            }))
-        } else {
-            Ok(None)
-        }
+    pub fn project(&self, name: &str) -> Result<ProjectRef> {
+        ProjectRef::find(self, name)
     }
+
+    // pub fn project(&self, path_or_ref: &str) -> Result<Option<ProjectRef>> {
+    //     let flake_ref = super::flake::parse(path_or_ref)?;
+    //     if let Some(project_config) = self.config.get_project_by_flake_ref(flake_ref.clone()) {
+    //         Ok(Some(ProjectRef {
+    //             flake_ref: flake_ref,
+    //             config: &project_config,
+    //             editable: self.local.is_editable(&project_config.name),
+    //         }))
+    //     } else {
+    //         Ok(None)
+    //     }
+    // }
 
     pub fn projects(&self) -> Vec<ProjectRef> {
+        let mut projects = Vec::new();
+        for project in &self.config.projects {
+            projects.push(
+                ProjectRef {
+                    config: project,
+                    flake_ref: project.flake_ref().unwrap(),
+                    editable: self.local.is_editable(&project.name),
+                }
+            );
+        }
+        projects
+    }
+
+    pub fn register(&mut self, name: &str, flake_ref: Rc<dyn FlakeRef>, path: &str) -> Result<ProjectRef> {
+        let config = self.config.add_project(name, flake_ref.as_ref(), path)?;
+        self.local.projects.insert(name.to_string(), false);
+        Ok(ProjectRef {
+            config: config,
+            flake_ref: flake_ref.clone(),
+            editable: false,
+        })
+    }
+
+    pub fn deregister(&mut self, name: &str, delete: bool) -> Result<()> {
+        // Remove project locally
+        if delete {
+            let project = self.project(name)?;
+            std::fs::remove_dir_all(&project.config.path)?;
+        }
+
+        // remove project from config
+        let index = self.config.projects.iter().position(|p| p.name == name)
+            .with_context(|| anyhow!("could not find project '{name}'"))?;
+        self.config.projects.remove(index);
+
+        // remove project from local lockfile
+        self.local.projects.remove(name);
+
+        Ok(())
+    }
+
+    pub fn print_tree(&self) -> () {
         todo!()
     }
 
-    pub fn add_project(&mut self, flake_ref: &str, directory: &str) -> Result<ProjectRef> {
-        todo!()
+    /// Clones a project locally
+    pub fn add(&mut self, name: &str) -> Result<()> {
+        let project = self.project(name)?;
+        Nix::clone(&project.flake_ref.flake_url(), &project.config.path, ".")?;
+        self.mark_editable(&name);
+        Ok(())
     }
 
-    pub fn remove_project(&mut self, path_or_ref: &str) -> Result<ProjectRef> {
-        todo!()
+    /// Removes a project from being tracked locally
+    pub fn rm(&mut self, name: &str, delete: bool) -> Result<()> {
+        self.unmark_editable(name);
+
+        if delete {
+            let project = self.project(name)?;
+            std::fs::remove_dir_all(&project.config.path)?;
+        }
+
+        Ok(())
     }
 
     pub fn mark_editable(&mut self, project_name: &str) -> () {
@@ -223,8 +323,13 @@ impl Workspace {
 }
 
 impl<'config> ProjectRef<'config> {
-    pub fn sync(&self) -> Result<()> {
-        todo!()
+    fn find(ws: &'config Workspace, name: &str) -> Result<ProjectRef<'config>> {
+        let config = ws.config.project(name)?;
+        Ok(ProjectRef {
+            config: config,
+            flake_ref: config.flake_ref()?,
+            editable: ws.local.is_editable(name),
+        })
     }
 }
 

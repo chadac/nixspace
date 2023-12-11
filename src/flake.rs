@@ -22,16 +22,16 @@ fn split_scheme(url: &str) -> Result<(String, String)> {
     split_once(url, ":")
 }
 
-/// splits <url>?<query_str> into (<url>, [<query_key>: <query_value>])
-fn split_query_str(url: &str) -> Result<(String, Vec<(String, String)>)> {
-    todo!()
-}
-
 pub trait FlakeRef {
     fn flake_url(&self) -> String;
     fn flake_type(&self) -> FlakeType;
     fn git_remote_url(&self) -> Option<String>;
     fn arg(&self, arg: &str) -> Option<String>;
+
+    /// try to infer a name for the flake
+    fn infer_name(&self) -> Option<String> {
+        self.arg("repo")
+    }
 
     fn input_spec(&self) -> InputSpec {
         InputSpec {
@@ -291,22 +291,31 @@ pub struct TarballUrl {
 
 impl TarballUrl {
     pub fn parse(scheme: &str, url: &str) -> Result<Rc<dyn FlakeRef>> {
-        todo!()
+        let re = Regex::new("//(.+)")?;
+        let m = re.captures(url).with_context(|| format!("could not parse tarball url: '{url}'"))?;
+        Ok(Rc::new(TarballUrl {
+            scheme: scheme.to_string(),
+            url: m.get(1).map(|s| s.as_str().to_string()).unwrap(),
+        }))
     }
 }
 
 impl FlakeRef for TarballUrl {
     fn flake_url(&self) -> String {
-        todo!()
+        format!(
+            "tarball+{scheme}://{url}",
+            scheme=self.scheme,
+            url=self.url,
+        )
     }
     fn flake_type(&self) -> FlakeType {
-        todo!()
+        FlakeType::Tarball
     }
     fn git_remote_url(&self) -> Option<String> {
         None
     }
     fn arg(&self, arg: &str) -> Option<String> {
-        todo!()
+        None
     }
 }
 
@@ -332,9 +341,8 @@ fn fmt_simple_url(scheme: &str, owner: &str, repo: &str, rev_or_ref: &Option<Str
     )
 }
 
-
 /// format:
-/// github:<owner>/<repo>(/<rev-or-ref>)?(\?<params>)?
+/// (github|gitlab|sourcehut):<owner>/<repo>(/<rev-or-ref>)?(\?<params>)?
 #[derive(Clone, PartialEq, Debug)]
 pub struct SimpleGitUrl {
     scheme: String,
@@ -367,7 +375,12 @@ impl FlakeRef for SimpleGitUrl {
         FlakeType::GitHub
     }
     fn git_remote_url(&self) -> Option<String> {
-        todo!()
+        Some(format!(
+            "https://{domain}{owner}/{repo}.git",
+            domain=self.domain,
+            owner=self.owner,
+            repo=self.repo,
+        ))
     }
     fn arg(&self, arg: &str) -> Option<String> {
         match arg {
@@ -478,6 +491,7 @@ mod tests {
         let ref1 = super::parse(url1)?;
         assert_eq!(ref1.flake_url(), url1);
         assert_eq!(ref1.flake_type(), FlakeType::GitHub);
+        assert_eq!(ref1.git_remote_url(), Some("https://github.com/chadac/dotfiles.git".to_string()));
         assert_eq!(ref1.arg("owner"), Some("chadac".to_string()));
         assert_eq!(ref1.arg("repo"), Some("dotfiles".to_string()));
         assert_eq!(ref1.arg("rev_or_ref"), Some("nix-config".to_string()));

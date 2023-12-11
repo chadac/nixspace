@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use glob_match::glob_match;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -126,25 +126,40 @@ impl Config {
         Ok(())
     }
 
+    pub fn env(&self, name: &str) -> Result<&EnvConfig> {
+        self.environments.get(name)
+            .with_context(|| anyhow!("environment does not exist: '{}'", name))
+    }
+
+    pub fn env_mut(&mut self, name: &str) -> Result<&mut EnvConfig> {
+        self.environments.get_mut(name)
+            .with_context(|| anyhow!("environment does not exist: '{}'", name))
+    }
+
     pub fn environments(&self) -> Vec<String> {
         self.environments.keys().map(|name| name.to_string()).collect()
     }
 
+    pub fn project(&self, name: &str) -> Result<&ProjectConfig> {
+        self.projects.iter().find(|p| p.name == name)
+            .with_context(|| anyhow!("could not find project '{}'", name))
+    }
+
     pub fn add_project<P: AsRef<Path> + ?Sized>(
         &mut self,
+        name: &str,
         flake_ref: &dyn FlakeRef,
         path: &P,
-        name: Option<String>,
     ) -> Result<&ProjectConfig> {
-        let n = name.unwrap_or(
-            flake_ref.arg("repo").ok_or(
-                anyhow!("could not infer a good project name to use.")
-            )?
-        );
+        // let n = name.unwrap_or(
+        //     flake_ref.arg("repo").ok_or(
+        //         anyhow!("could not infer a good project name to use.")
+        //     )?
+        // );
         let mut pb = PathBuf::new();
         pb.push(path);
         self.projects.push(ProjectConfig {
-            name: n.to_string(),
+            name: name.to_string(),
             url: flake_ref.flake_url(),
             path: pb,
             strategy: None,
@@ -160,7 +175,8 @@ impl Config {
     }
 
     pub fn get_project_by_flake_ref(&self, flake_ref: Rc<dyn FlakeRef>) -> Option<&ProjectConfig> {
-        todo!()
+        let url = flake_ref.flake_url();
+        self.projects.iter().find(|p| p.url == url)
     }
 }
 
@@ -184,6 +200,12 @@ impl LocalConfig {
     /// Returns if a project is editable by the project name
     pub fn is_editable(&self, project_name: &str) -> bool {
         *self.projects.get(project_name).unwrap_or(&false)
+    }
+}
+
+impl ProjectConfig {
+    pub fn flake_ref(&self) -> Result<Rc<dyn FlakeRef>> {
+        crate::flake::parse(&self.url)
     }
 }
 

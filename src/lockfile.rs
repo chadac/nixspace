@@ -81,9 +81,9 @@ impl LockFile {
         Ok(())
     }
 
-    pub fn get_input_spec(&self, name: &str) -> InputSpec {
-        todo!()
-   }
+    pub fn get_input_spec(&self, name: &str) -> Option<InputSpec> {
+        self.nodes.get(name).map(|r| r.locked.clone())
+    }
 
     pub fn update(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
         let p = self.nodes.get_mut(name)
@@ -109,11 +109,6 @@ impl InputSpec {
         //     rev_count: None,
         //     last_modified: None,
         // }
-    }
-
-    /// Generate FlakeRef from InputSpec
-    pub fn flake_ref(&self) -> Rc<dyn FlakeRef> {
-        todo!()
     }
 }
 

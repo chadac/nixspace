@@ -7,6 +7,7 @@ mod config;
 mod lockfile;
 mod flake;
 mod cli;
+mod util;
 
 use crate::config::Config;
 use crate::cli::{CliCommand, Git, Nix};
@@ -14,7 +15,7 @@ use crate::workspace::{ProjectRef, Workspace};
 use crate::flake::FlakeRef;
 use crate::lockfile::InputSpec;
 
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::Path;
 
@@ -54,9 +55,9 @@ enum Commands {
 
     /// link a project locally into the workspace;
     /// i.e., clone it and make it editable.
-    Link(Link),
+    Add(Add),
     /// unlink the project from the workspace
-    Unlink(Unlink),
+    Rm(Rm),
 
     // GIT MANAGEMENT
     /// pull the workspace config + lockfile from the upstream remote
@@ -131,7 +132,9 @@ struct Show {
 
 impl Command for Show {
     fn run(&self) -> Result<()> {
-        todo!()
+        let ws = Workspace::discover()?;
+        ws.print_tree();
+        Ok(())
     }
 }
 
@@ -141,12 +144,6 @@ enum ConfigSubcommand {
     Get(ConfigGet),
     /// set a configuration value
     Set(ConfigSet),
-}
-
-impl Command for ConfigSubcommand {
-    fn run(&self) -> Result<()> {
-        todo!()
-    }
 }
 
 #[derive(Args, Debug)]
@@ -163,18 +160,37 @@ struct ConfigSet {
     value: String,
 }
 
+impl Command for ConfigSubcommand {
+    fn run(&self) -> Result<()> {
+        match &self {
+            ConfigSubcommand::Get(get) => {
+                let ws = Workspace::discover()?;
+                match get.name.as_str() {
+                    "default_env" => println!("{}", serde_yaml::to_string(&ws.config.default_env)?),
+                    _ => bail!("error: unrecognized configuration name {}", get.name),
+                };
+            },
+            ConfigSubcommand::Set(set) => {
+                let mut ws = Workspace::discover()?;
+                match set.name.as_str() {
+                    "default_env" => {
+                        ws.config.default_env = set.value.to_string();
+                    }
+                    _ => bail!("error: unrecognized configuration name {}", set.name),
+                }
+                ws.save()?;
+            },
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum EnvSubcommand {
     /// get a configuration value
     Get(EnvGet),
     /// set a configuration value
     Set(EnvSet),
-}
-
-impl Command for EnvSubcommand {
-    fn run(&self) -> Result<()> {
-        todo!()
-    }
 }
 
 #[derive(Args, Debug)]
@@ -195,10 +211,31 @@ struct EnvSet {
     value: String,
 }
 
-
-impl Command for EnvGet {
+impl Command for EnvSubcommand {
     fn run(&self) -> Result<()> {
-        todo!()
+        match &self {
+            EnvSubcommand::Get(get) => {
+                let ws = Workspace::discover()?;
+                let env = ws.config.env(&get.env)?;
+                match get.name.as_str() {
+                    // todo: serialize
+                    "strategy" => println!("{}", serde_yaml::to_string(&env.strategy)?),
+                    _ => bail!("error: unrecognized environment key '{}'", get.name),
+                }
+            },
+            EnvSubcommand::Set(set) => {
+                let mut ws = Workspace::discover()?;
+                let env = ws.config.env_mut(&set.env)?;
+                match set.name.as_str() {
+                    "strategy" => {
+                        env.strategy = serde_yaml::from_str(&set.value)?;
+                    },
+                    _ => bail!("error: unrecognized environment key '{}'", set.name),
+                }
+                ws.save()?;
+            },
+        };
+        Ok(())
     }
 }
 
@@ -209,7 +246,11 @@ struct Register {
     /// name of the directory that the project will be cloned into when added.
     /// default is the name of the project at the root of the workspace.
     #[arg(short, long)]
-    directory: Option<String>,
+    path: String,
+    /// name of the project used for replacing in flake.nix files
+    /// default is the name of the project (if it can be inferred)
+    #[arg(short, long)]
+    name: Option<String>,
     /// if present, clones the project locally
     #[arg(long)]
     edit: bool,
@@ -217,31 +258,26 @@ struct Register {
 
 impl Command for Register {
     fn run(&self) -> Result<()> {
-        let mut ns = Workspace::discover()?;
-        let project = match ns.project(&self.path_or_ref)? {
-            Some(p) => p,
-            None => {
-                if let Some(dir) = &self.directory {
-                    ns.add_project(&self.path_or_ref, &dir)?
-                } else {
-                    Err(Error::msg("--directory must be specified when adding a new project."))?
-                }
-            }
-        };
+        let mut ws = Workspace::discover()?;
+        let flake_ref = flake::parse(&self.path_or_ref)?;
+        let name = self.name.as_ref().map(|s| s.to_string()).unwrap_or(
+            flake_ref.infer_name().context("could not infer project name!")?
+        );
+        let project = ws.register(&name, flake_ref, &self.path)?;
+
         if self.edit {
-            Nix::clone(&project.flake_ref.flake_url(), &project.config.path, ".")?;
-            let name = project.config.name.clone();
-            ns.mark_editable(&name);
+            ws.add(&name)?;
         }
-        ns.save()?;
+
+        ws.save()?;
         Ok(())
     }
 }
 
 #[derive(Args, Debug)]
 struct Deregister {
-    /// path or reference to the project
-    path_or_ref: String,
+    /// identifier for the project
+    name: String,
     #[arg(long)]
     /// if present, delete the directory from the workspace
     delete: bool,
@@ -249,39 +285,42 @@ struct Deregister {
 
 impl Command for Deregister {
     fn run(&self) -> Result<()> {
-        todo!()
+        let mut ws = Workspace::discover()?;
+        ws.deregister(&self.name, self.delete)?;
+        ws.save()?;
+        Ok(())
     }
 }
 
 #[derive(Args, Debug)]
-struct Link {
+struct Add {
     /// path or reference to the project
-    path_or_ref: String,
+    name: String,
 }
 
-impl Command for Link {
+impl Command for Add {
     fn run(&self) -> Result<()> {
-        todo!()
+        let mut ws = Workspace::discover()?;
+        ws.add(&self.name)?;
+        ws.save()?;
+        Ok(())
     }
 }
 
 #[derive(Args, Debug)]
-struct Unlink {
-    /// path or flake reference to the project.
-    path_or_ref: String,
+struct Rm {
+    /// name of the project
+    name: String,
     /// if present, deletes the project locally
     #[arg(long)]
     rm: bool
 }
 
-impl Command for Unlink {
+impl Command for Rm {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        let project = ws.remove_project(&self.path_or_ref)?;
-        if self.rm {
-            // TODO: Additional prompt for input
-            std::fs::remove_dir_all(&project.config.path)?;
-        }
+        ws.rm(&self.name, self.rm)?;
+        ws.save()?;
         Ok(())
     }
 }
@@ -297,11 +336,6 @@ impl Command for Sync {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         ws.sync()?;
-        for project in ws.projects() {
-            if self.local && project.editable {
-                project.sync()?
-            }
-        }
         Ok(())
     }
 }
@@ -386,8 +420,8 @@ fn main() -> Result<()> {
         Commands::Register(cmd) => cmd.run(),
         Commands::Deregister(cmd) => cmd.run(),
 
-        Commands::Link(cmd) => cmd.run(),
-        Commands::Unlink(cmd) => cmd.run(),
+        Commands::Add(cmd) => cmd.run(),
+        Commands::Rm(cmd) => cmd.run(),
 
         Commands::Sync(cmd) => cmd.run(),
         Commands::Publish(cmd) => cmd.run(),
