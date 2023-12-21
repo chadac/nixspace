@@ -14,11 +14,10 @@ let
     builtins.mapAttrs
       (key: node:
         let
-
           sourceInfo =
             if key == lockFile.root
             then rootSrc
-            else if overrides ? key
+            else if (builtins.hasAttr key overrides)
             then overrides.${key}
             else fetchTree (node.info or {} // removeAttrs node.locked ["dir"]);
 
@@ -56,7 +55,8 @@ let
                 (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
                 (builtins.tail path);
 
-          outputs = flake.outputs (inputs // { self = result; });
+          outputs =
+            (flake.outputs (inputs // { self = result; }));
 
           result =
             outputs

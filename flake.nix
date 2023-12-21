@@ -5,41 +5,27 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-lib.url = "github:NixOS/nixpkgs/nixpkgs-unstable?dir=lib";
     systems.url = "github:nix-systems/default";
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-    };
   };
 
-  outputs = inputs@{ flake-parts, nixpkgs-lib, systems, ... }:
+  outputs = inputs@{ nixpkgs, nixpkgs-lib, systems, ... }:
     let
+      lib = import nixpkgs-lib;
       defaultSystems = import systems;
-    in flake-parts.lib.mkFlake { inherit inputs; } {
-      flake = {
-        lib = import ./lib {
-          inherit (nixpkgs-lib) lib;
-          inherit defaultSystems;
-          revInfo =
-            if nixpkgs-lib?rev
-            then " (nixpkgs-lib.rev: ${nixpkgs-lib.rev})"
-            else "";
-        };
+      eachSystem = lib.genAttrs defaultSystems;
+    in {
+      lib = import ./lib {
+        inherit lib;
+        inherit defaultSystems;
+        revInfo =
+          if lib?rev
+          then " (nixpkgs-lib.rev: ${lib.rev})"
+          else "";
       };
-
-      systems = defaultSystems;
-
-      perSystem = { pkgs, ... }: let
-        nixspace = pkgs.callPackage ./. { };
+    } // {
+      packages = eachSystem (system: let
+        pkgs = import nixpkgs { inherit system; };
       in {
-        packages.default = nixspace;
-        devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            rustc
-            rustup
-            cargo
-            cargo-watch
-            clippy
-          ];
-        };
-      };
+        nixspace = pkgs.callPackage ./. { };
+      });
     };
 }

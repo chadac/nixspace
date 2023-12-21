@@ -1,11 +1,12 @@
 {
-  flake-parts,
   lib,
-  defaultSystems
+  defaultSystems,
+  revInfo,
 }:
 rec {
   callFlake = import ./call-flake.nix;
   mkWorkspace = import ./create-workspace.nix {
-    inherit defaultSystems flake-parts lib callFlake;
+    inherit lib callFlake;
   };
+  inherit revInfo;
 }

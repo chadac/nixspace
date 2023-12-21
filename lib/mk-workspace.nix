@@ -2,21 +2,22 @@
 {
   src,
   inputs,
-  cfg,
-  # cfgFile ? src + "/nixspace.toml",
-  lockFile ? src + "/.nixspace/dev.lock",
-  # localFile ? src + "/.nixspace/local.json",
+  cfgFile ? src + "/nixspace.toml",
+  localFile ? src + "/.nixspace/local.json",
 }: let
-  # TODO: Editable Projects MUST have a flake.lock
-  # cfg = builtins.fromTOML (builtins.readFile cfgFile);
-  lock = builtins.fromJSON (builtins.readFile lockFile);
+  cfg = builtins.fromTOML (builtins.readFile cfgFile);
 
+  envNames = map (env: env.name) cfg.environments;
+
+  local = builtins.fromJSON (builtins.readFile "${impureRoot}/.nixspace/local.json");
+
+  # get the workspace root from the environment
   findRoot = depth: path:
     if (depth > 100) then abort "could not find workspace root; directory depth 100 exceeded"
     else if (builtins.pathExists "${path}/nixspace.toml") then path
     else findRoot (depth + 1) "${path}/..";
   impureRoot = findRoot 1 (builtins.getEnv "PWD");
-  local = builtins.fromJSON (builtins.readFile "${impureRoot}/.nixspace/local.json");
+
   projectCfg = builtins.listToAttrs (builtins.map
     (project: { name = project.name; value = project; })
     cfg.projects

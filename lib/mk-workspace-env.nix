@@ -1,14 +1,13 @@
 { lib, callFlake }:
 {
-  src,
   inputs,
   cfg,
   # cfgFile ? src + "/nixspace.toml",
-  lockFile ? src + "/.nixspace/dev.lock",
+  lockFile,
+  local,
   # localFile ? src + "/.nixspace/local.json",
 }: let
   # TODO: Editable Projects MUST have a flake.lock
-  # cfg = builtins.fromTOML (builtins.readFile cfgFile);
   lock = builtins.fromJSON (builtins.readFile lockFile);
 
   findRoot = depth: path:
