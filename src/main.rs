@@ -166,7 +166,7 @@ impl Command for ConfigSubcommand {
             ConfigSubcommand::Get(get) => {
                 let ws = Workspace::discover()?;
                 match get.name.as_str() {
-                    "default_env" => println!("{}", serde_yaml::to_string(&ws.config.default_env)?),
+                    "default_env" => println!("{}", toml::to_string(&ws.config.default_env)?),
                     _ => bail!("error: unrecognized configuration name {}", get.name),
                 };
             },
@@ -219,7 +219,7 @@ impl Command for EnvSubcommand {
                 let env = ws.config.env(&get.env)?;
                 match get.name.as_str() {
                     // todo: serialize
-                    "strategy" => println!("{}", serde_yaml::to_string(&env.strategy)?),
+                    "strategy" => println!("{}", serde_json::to_string(&env.strategy)?),
                     _ => bail!("error: unrecognized environment key '{}'", get.name),
                 }
             },
@@ -228,7 +228,7 @@ impl Command for EnvSubcommand {
                 let env = ws.config.env_mut(&set.env)?;
                 match set.name.as_str() {
                     "strategy" => {
-                        env.strategy = serde_yaml::from_str(&set.value)?;
+                        env.strategy = serde_json::from_str(&set.value)?;
                     },
                     _ => bail!("error: unrecognized environment key '{}'", set.name),
                 }
@@ -246,7 +246,7 @@ struct Register {
     /// name of the directory that the project will be cloned into when added.
     /// default is the name of the project at the root of the workspace.
     #[arg(short, long)]
-    path: String,
+    path: Option<String>,
     /// name of the project used for replacing in flake.nix files
     /// default is the name of the project (if it can be inferred)
     #[arg(short, long)]
@@ -430,6 +430,6 @@ fn main() -> Result<()> {
         Commands::Build(nix) => nix.run("build"),
         Commands::Run(nix) => nix.run("run"),
         Commands::Flake(nix) => nix.run("flake"),
-    }?;
+    }.unwrap();
     Ok(())
 }

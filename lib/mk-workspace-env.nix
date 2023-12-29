@@ -2,24 +2,15 @@
 {
   inputs,
   cfg,
-  # cfgFile ? src + "/nixspace.toml",
+  projectCfg,
   lockFile,
   local,
+  impureRoot ? null,
   # localFile ? src + "/.nixspace/local.json",
 }: let
   # TODO: Editable Projects MUST have a flake.lock
   lock = builtins.fromJSON (builtins.readFile lockFile);
 
-  findRoot = depth: path:
-    if (depth > 100) then abort "could not find workspace root; directory depth 100 exceeded"
-    else if (builtins.pathExists "${path}/nixspace.toml") then path
-    else findRoot (depth + 1) "${path}/..";
-  impureRoot = findRoot 1 (builtins.getEnv "PWD");
-  local = builtins.fromJSON (builtins.readFile "${impureRoot}/.nixspace/local.json");
-  projectCfg = builtins.listToAttrs (builtins.map
-    (project: { name = project.name; value = project; })
-    cfg.projects
-  );
   projects = builtins.mapAttrs (name: inputSpec:
     if ((builtins.hasAttr name local.projects) && local.projects.${name}.editable)
     then builtins.fetchTree {
@@ -28,6 +19,7 @@
     }
     else builtins.fetchTree inputSpec.locked
   ) lock.nodes;
+
   wsNodes =
     inputs
     // (
@@ -44,17 +36,4 @@
       ) projects
     )
   ;
-  # wsModule = { ... }: {
-  #   perSystem = { pkgs, system, ... }: let
-  #     inherit (lib) concatMapAttrs nameValuePair mapAttrs';
-  #     mapPackages = property: concatMapAttrs (package: flake:
-  #       mapAttrs' (name: value: nameValuePair "${package}.${name}" value)
-  #         flake.${property}.${system}
-  #     ) projects;
-  #   in builtins.listToAttrs (property:
-  #     { name = property; value = mapPackages property; }
-  #   ) [ "apps" "checks" "packages" "devShells" ];
-  # };
-in {
-  projects = wsNodes;
-}
+in wsNodes

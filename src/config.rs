@@ -11,7 +11,7 @@ use super::cli::{CliCommand, Git, Nix};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    pub environments: HashMap<String, EnvConfig>,
+    pub environments: Vec<EnvConfig>,
     pub projects: Vec<ProjectConfig>,
 
     pub default_env: String,
@@ -32,14 +32,15 @@ pub enum UpdateStrategy {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EnvConfig {
-    pub strategy: UpdateStrategy
+    pub name: String,
+    pub strategy: UpdateStrategy,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProjectConfig {
     pub name: String,
     pub url: String,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub strategy: Option<HashMap<String, UpdateStrategy>>,
 }
 
@@ -105,8 +106,9 @@ impl UpdateStrategy {
 
 impl Config {
     pub fn new() -> Self {
-        let mut default_envs = HashMap::new();
-        default_envs.insert("dev".to_string(), EnvConfig {
+        let mut default_envs = Vec::new();
+        default_envs.push(EnvConfig {
+            name: "dev".to_string(),
             strategy: UpdateStrategy::Latest
         });
         Config {
@@ -118,26 +120,26 @@ impl Config {
 
     pub fn read(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        Ok(serde_yaml::from_str::<Self>(&contents)?)
+        Ok(toml::from_str::<Self>(&contents)?)
     }
 
     pub fn write(&self, path: &Path) -> Result<()> {
-        std::fs::write(path, serde_yaml::to_string(&self)?)?;
+        std::fs::write(path, toml::to_string(&self)?)?;
         Ok(())
     }
 
     pub fn env(&self, name: &str) -> Result<&EnvConfig> {
-        self.environments.get(name)
+        self.environments.iter().find(|env| env.name == name)
             .with_context(|| anyhow!("environment does not exist: '{}'", name))
     }
 
     pub fn env_mut(&mut self, name: &str) -> Result<&mut EnvConfig> {
-        self.environments.get_mut(name)
+        self.environments.iter_mut().find(|env| env.name == name)
             .with_context(|| anyhow!("environment does not exist: '{}'", name))
     }
 
     pub fn environments(&self) -> Vec<String> {
-        self.environments.keys().map(|name| name.to_string()).collect()
+        self.environments.iter().map(|env| env.name.to_string()).collect()
     }
 
     pub fn project(&self, name: &str) -> Result<&ProjectConfig> {
@@ -145,19 +147,21 @@ impl Config {
             .with_context(|| anyhow!("could not find project '{}'", name))
     }
 
-    pub fn add_project<P: AsRef<Path> + ?Sized>(
+    pub fn add_project<P: AsRef<Path>>(
         &mut self,
         name: &str,
         flake_ref: &dyn FlakeRef,
-        path: &P,
+        path: &Option<P>,
     ) -> Result<&ProjectConfig> {
         // let n = name.unwrap_or(
         //     flake_ref.arg("repo").ok_or(
         //         anyhow!("could not infer a good project name to use.")
         //     )?
         // );
-        let mut pb = PathBuf::new();
-        pb.push(path);
+        let pb = match path {
+            Some(p) => Some(PathBuf::from(p.as_ref())),
+            None => None
+        };
         self.projects.push(ProjectConfig {
             name: name.to_string(),
             url: flake_ref.flake_url(),
@@ -216,24 +220,25 @@ mod tests {
     #[test]
     fn test_deserialize() {
         let config = Config {
-            environments: HashMap::from([
-                ("dev".to_string(), EnvConfig { strategy: UpdateStrategy::Latest, }),
-                ("stage".to_string(), EnvConfig { strategy: UpdateStrategy::Freeze, }),
-                ("prod".to_string(), EnvConfig {
+            environments: Vec::from([
+                EnvConfig { name: "dev".to_string(), strategy: UpdateStrategy::Latest, },
+                EnvConfig { name: "stage".to_string(), strategy: UpdateStrategy::Freeze, },
+                EnvConfig {
+                    name: "prod".to_string(),
                     strategy: UpdateStrategy::LatestTag(Some("release-*".to_string())),
-                }),
+                },
             ]),
             projects: Vec::from([
                 ProjectConfig {
                     name: "project-a".to_string(),
                     url: "github:chadac/project-a".to_string(),
-                    path: PathBuf::from("./project-a"),
+                    path: Some(PathBuf::from("./project-a")),
                     strategy: None,
                 },
                 ProjectConfig {
                     name: "project-b".to_string(),
                     url: "github:chadac/project-b".to_string(),
-                    path: PathBuf::from("./subfolder/project-b"),
+                    path: Some(PathBuf::from("./subfolder/project-b")),
                     strategy: Some(HashMap::from([
                         ("stage".to_string(), UpdateStrategy::Freeze),
                     ])),
@@ -241,7 +246,7 @@ mod tests {
             ]),
             default_env: "dev".to_string(),
         };
-        let repr = serde_yaml::to_string(&config).unwrap();
+        let repr = toml::to_string(&config).unwrap();
         println!("{}", repr);
     }
 }

@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -15,9 +15,9 @@ pub struct LockFile {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LockedRef {
-    locked: InputSpec,
-    original: InputSpec,
-    inputs: HashMap<String, String>,
+    locked: Option<InputSpec>,
+    original: Option<InputSpec>,
+    inputs: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
@@ -65,7 +65,14 @@ impl LockFile {
     /// Generate an empty lockfile
     pub fn empty() -> Self {
         Self {
-            nodes: HashMap::new(),
+            nodes: HashMap::from([
+                ("root".to_string(),
+                 LockedRef {
+                     locked: None,
+                     original: None,
+                     inputs: Some(HashMap::new()),
+                 }),
+            ]),
             root: "root".to_string(),
             version: 7,
         }
@@ -82,13 +89,28 @@ impl LockFile {
     }
 
     pub fn get_input_spec(&self, name: &str) -> Option<InputSpec> {
-        self.nodes.get(name).map(|r| r.locked.clone())
+        self.nodes.get(name).map(|r| r.locked.clone()).flatten()
     }
 
-    pub fn update(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
+    pub fn add(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
         let p = self.nodes.get_mut(name)
             .ok_or(anyhow!("could not find project '{}'", name))?;
-        p.locked = new_input_spec.clone();
+        p.locked = Some(new_input_spec.clone());
+        let root = self.nodes.get_mut("root")
+            .context("failed parsing lockfile: missing entry 'root' in nodes")?;
+        if let Some(ref mut inputs) = root.inputs {
+            inputs.insert(name.to_string(), name.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn rm(&mut self, name: &str) -> Result<()> {
+        self.nodes.remove(name);
+        let root = self.nodes.get_mut("root")
+            .context("failed parsing lockfile; missing entry 'root' in nodes")?;
+        if let Some(ref mut inputs) = root.inputs {
+            inputs.remove(name);
+        }
         Ok(())
     }
 }
@@ -116,4 +138,10 @@ impl InputSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lockfile_add_succeeds() -> Result<()> {
+
+        Ok(())
+    }
 }

@@ -8,9 +8,9 @@ use super::lockfile::LockFile;
 use super::config::{Config, LocalConfig, ProjectConfig};
 use super::cli::{CliCommand, Git, Nix};
 
-static CONFIG_PATH: &str = "nixspace.yml";
+static CONFIG_PATH: &str = "nixspace.toml";
 static LOCKFILE_DIR: &str = ".nixspace";
-static LOCAL_PATH: &str = ".nixspace/nixspace.local";
+static LOCAL_PATH: &str = ".nixspace/local.json";
 
 pub struct Workspace {
     pub root: PathBuf,
@@ -68,10 +68,11 @@ impl Workspace {
             config: config,
             lock: envs.iter()
                 .map(|env| {
-                    let file = LockFile::read(&root.join(LOCKFILE_DIR).join(format!("{}.lock", env)));
+                    let path = root.join(LOCKFILE_DIR).join(format!("{}.lock", env));
+                    let file = LockFile::read(&path);
                     match file {
                         Ok(f) => Ok((env.to_string(), f)),
-                        Err(e) => Err(e),
+                        Err(e) => Err(anyhow!("error when attempting to read '{}': {e}", path.display())),
                     }
                 }).collect::<Result<HashMap<String, LockFile>, _>>()?,
             local: LocalConfig::read(&root.join(LOCAL_PATH))?,
@@ -80,10 +81,11 @@ impl Workspace {
 
     pub fn find_root<P: AsRef<Path> + ?Sized>(wd: &P) -> Option<PathBuf> {
         let mut cwd: PathBuf = PathBuf::new();
-        let filename = "ws.yml";
+        let filename = CONFIG_PATH;
         cwd.push(wd);
         loop {
             let path = cwd.as_path().join(filename);
+            println!("{}", path.display());
             if path.exists() {
                 return Some(cwd.as_path().into());
             }
@@ -126,10 +128,9 @@ impl Workspace {
         files.push(flake_nix);
         files.push(flake_lock);
         files.push(self.config_path());
-        files.push(self.local_path());
         for env in self.config.environments() {
             let mut env_lock = self.root.clone();
-            env_lock.push(format!("{env}.json"));
+            env_lock.push(format!("{env}.lock"));
             files.push(env_lock);
         }
         files
@@ -203,7 +204,7 @@ impl Workspace {
         projects
     }
 
-    pub fn register(&mut self, name: &str, flake_ref: Rc<dyn FlakeRef>, path: &str) -> Result<ProjectRef> {
+    pub fn register(&mut self, name: &str, flake_ref: Rc<dyn FlakeRef>, path: &Option<String>) -> Result<ProjectRef> {
         let config = self.config.add_project(name, flake_ref.as_ref(), path)?;
         self.local.projects.insert(name.to_string(), false);
         Ok(ProjectRef {
@@ -217,13 +218,20 @@ impl Workspace {
         // Remove project locally
         if delete {
             let project = self.project(name)?;
-            std::fs::remove_dir_all(&project.config.path)?;
+            if let Some(p) = &project.config.path {
+                std::fs::remove_dir_all(&p)?;
+            }
         }
 
         // remove project from config
         let index = self.config.projects.iter().position(|p| p.name == name)
             .with_context(|| anyhow!("could not find project '{name}'"))?;
         self.config.projects.remove(index);
+
+        // remove project from lockfile entries
+        for (_, lockfile) in self.lock.iter_mut() {
+            lockfile.rm(name)?;
+        }
 
         // remove project from local lockfile
         self.local.projects.remove(name);
@@ -238,7 +246,11 @@ impl Workspace {
     /// Clones a project locally
     pub fn add(&mut self, name: &str) -> Result<()> {
         let project = self.project(name)?;
-        Nix::clone(&project.flake_ref.flake_url(), &project.config.path, ".")?;
+        Nix::clone(
+            &project.flake_ref.flake_url(),
+            &project.config.path.clone().context("project has no local path")?,
+            "."
+        )?;
         self.mark_editable(&name);
         Ok(())
     }
@@ -249,7 +261,9 @@ impl Workspace {
 
         if delete {
             let project = self.project(name)?;
-            std::fs::remove_dir_all(&project.config.path)?;
+            if let Some(p) = &project.config.path {
+                std::fs::remove_dir_all(&p)?;
+            }
         }
 
         Ok(())
@@ -272,9 +286,7 @@ impl Workspace {
             anyhow!("error: workspace config missing env '{}'", e)
         )?;
 
-        let default = self.config.environments.get(&e)
-            .expect("missing environment")
-            .strategy.clone();
+        let default = self.config.env(&e)?.strategy.clone();
         let mut lock_updates = Vec::new();
         for project in self.projects() {
             let strategy = {
@@ -291,20 +303,7 @@ impl Workspace {
         }
         let lock = self.lock.get_mut(&e).unwrap();
         for (project_name, input_spec) in lock_updates {
-            lock.update(&project_name, &input_spec)?;
-        }
-        Ok(())
-    }
-
-    /// Tracks all local editable projects in the Git repository.
-    ///
-    /// Necessary since Nix Flakes only track projects which are
-    /// tracked in Git.
-    pub fn stage_editable_projects(&self) -> Result<()> {
-        for project in self.projects().iter() {
-            if project.editable {
-                Git::add(&project.config.path)?;
-            }
+            lock.add(&project_name, &input_spec)?;
         }
         Ok(())
     }
@@ -317,7 +316,6 @@ impl Workspace {
             Git::add(&self.lock_path(&env))?;
         }
         Git::commit(commit_message, &self.root)?;
-        self.stage_editable_projects()?;
         Ok(())
     }
 }
@@ -344,7 +342,7 @@ mod tests {
         let tmp = TempDir::new("workspace")?;
         let cwd = tmp.path().join("a/b/c/d/e");
         std::fs::create_dir_all(cwd.clone())?;
-        let ws = tmp.path().join("a/b/ws.yml");
+        let ws = tmp.path().join("a/b/nixspace.toml");
         std::fs::OpenOptions::new().create(true).write(true).open(ws.clone())?;
         let root = Workspace::find_root(&cwd);
         assert_eq!(root, Some(ws.parent().unwrap().into()));

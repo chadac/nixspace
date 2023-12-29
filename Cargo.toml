@@ -1,12 +1,12 @@
 [package]
-name = "nixspace"
+name = "ns"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = { version = "1.0.75", features = ["backtrace"] }
 clap = { version = "4.4.7", features = ["derive"] }
 glob-match = "0.2.1"
 querystring = "1.1.0"
@@ -14,7 +14,7 @@ regex = "1.10.2"
 serde = { version = "1.0.192", features = ["derive"] }
 serde_json = "1.0.108"
 serde_variant = "0.1.2"
-serde_yaml = "0.9.27"
+toml = "0.8.8"
 
 [dev-dependencies]
 tempdir = "0.3.7"
