@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 use serde::{Serialize, Deserialize};
@@ -27,6 +27,8 @@ pub trait FlakeRef {
     fn flake_type(&self) -> FlakeType;
     fn git_remote_url(&self) -> Option<String>;
     fn arg(&self, arg: &str) -> Option<String>;
+
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef>;
 
     /// try to infer a name for the flake
     fn infer_name(&self) -> Option<String> {
@@ -104,6 +106,12 @@ impl FlakeRef for FlakeIndirect {
         )
     }
 
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        let mut copy = self.clone();
+        copy.rev = Some(rev.to_string());
+        Rc::new(copy)
+    }
+
     fn flake_type(&self) -> FlakeType {
         FlakeType::Indirect
     }
@@ -166,6 +174,9 @@ impl FlakeRef for FlakePath {
             params=params_to_string(&self.params),
         )
     }
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        Rc::new(self.clone())
+    }
     fn flake_type(&self) -> FlakeType {
         FlakeType::Path
     }
@@ -225,6 +236,12 @@ impl FlakeRef for GitUrl {
     fn flake_type(&self) -> FlakeType {
         FlakeType::Git
     }
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        let mut clone = self.clone();
+        clone.params.retain(|(k, _)| k != "rev");
+        clone.params.push(("rev".to_string(), rev.to_string()));
+        Rc::new(clone)
+    }
     fn git_remote_url(&self) -> Option<String> {
         Some(format!(
             "{scheme}:{server}{path}",
@@ -276,6 +293,12 @@ impl FlakeRef for MercurialUrl {
     fn git_remote_url(&self) -> Option<String> {
         None
     }
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        let mut clone = self.clone();
+        clone.params.retain(|(k, _)| k != "rev");
+        clone.params.push(("rev".to_string(), rev.to_string()));
+        Rc::new(clone)
+    }
     fn arg(&self, arg: &str) -> Option<String> {
         self.params.iter().find(|(k, _)| k == arg).map(|(_, v)| v.to_string())
     }
@@ -313,6 +336,9 @@ impl FlakeRef for TarballUrl {
     }
     fn git_remote_url(&self) -> Option<String> {
         None
+    }
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        Rc::new(self.clone())
     }
     fn arg(&self, arg: &str) -> Option<String> {
         None
@@ -381,6 +407,11 @@ impl FlakeRef for SimpleGitUrl {
             owner=self.owner,
             repo=self.repo,
         ))
+    }
+    fn with_rev(&self, rev: &str) -> Rc<dyn FlakeRef> {
+        let mut clone = self.clone();
+        clone.rev_or_ref = Some(rev.to_string());
+        Rc::new(clone)
     }
     fn arg(&self, arg: &str) -> Option<String> {
         match arg {

@@ -1,0 +1,14 @@
+---
+source: src/cli.rs
+expression: "Git::ls_remote(\"https://github.com/chadac/test-nixspace-nix-shared\")?"
+---
+[
+    GitRef {
+        rev: "9fe367dbf57fe507c07dc82f80bd3a2b43696d68",
+        git_ref: "HEAD",
+    },
+    GitRef {
+        rev: "9fe367dbf57fe507c07dc82f80bd3a2b43696d68",
+        git_ref: "refs/heads/main",
+    },
+]

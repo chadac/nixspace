@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Error, Result};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -15,7 +15,7 @@ static LOCAL_PATH: &str = ".nixspace/local.json";
 pub struct Workspace {
     pub root: PathBuf,
     pub config: Config,
-    pub lock: HashMap<String, LockFile>,
+    pub lock: BTreeMap<String, LockFile>,
     pub local: LocalConfig,
 }
 
@@ -74,7 +74,7 @@ impl Workspace {
                         Ok(f) => Ok((env.to_string(), f)),
                         Err(e) => Err(anyhow!("error when attempting to read '{}': {e}", path.display())),
                     }
-                }).collect::<Result<HashMap<String, LockFile>, _>>()?,
+                }).collect::<Result<BTreeMap<String, LockFile>, _>>()?,
             local: LocalConfig::read(&root.join(LOCAL_PATH))?,
         })
     }
@@ -85,7 +85,6 @@ impl Workspace {
         cwd.push(wd);
         loop {
             let path = cwd.as_path().join(filename);
-            println!("{}", path.display());
             if path.exists() {
                 return Some(cwd.as_path().into());
             }
@@ -206,7 +205,7 @@ impl Workspace {
 
     pub fn register(&mut self, name: &str, flake_ref: Rc<dyn FlakeRef>, path: &Option<String>) -> Result<ProjectRef> {
         let config = self.config.add_project(name, flake_ref.as_ref(), path)?;
-        self.local.projects.insert(name.to_string(), false);
+        self.local.unmark_editable(name);
         Ok(ProjectRef {
             config: config,
             flake_ref: flake_ref.clone(),
@@ -246,11 +245,20 @@ impl Workspace {
     /// Clones a project locally
     pub fn add(&mut self, name: &str) -> Result<()> {
         let project = self.project(name)?;
-        Nix::clone(
-            &project.flake_ref.flake_url(),
-            &project.config.path.clone().context("project has no local path")?,
-            "."
-        )?;
+        if project.config.path.is_none() {
+            bail!("cannot use project with no configured local path. see `ns project --help`");
+        }
+        let path = project.config.path.as_ref().unwrap();
+        if !path.exists() {
+           Nix::clone(
+               &project.flake_ref.flake_url(),
+               &path,
+               "."
+           )?;
+        }
+        if self.local.is_editable(&name) {
+            bail!("project {0} is already marked as editable; exiting", project.config.name);
+        }
         self.mark_editable(&name);
         Ok(())
     }
@@ -270,14 +278,14 @@ impl Workspace {
     }
 
     pub fn mark_editable(&mut self, project_name: &str) -> () {
-        self.local.projects.insert(project_name.to_string(), true);
+        self.local.mark_editable(project_name);
     }
 
     pub fn unmark_editable(&mut self, project_name: &str) -> () {
-        self.local.projects.insert(project_name.to_string(), false);
+        self.local.unmark_editable(project_name);
     }
 
-    pub fn update_lock(&mut self, env: &Option<String>, projects: &Vec<String>) -> Result<()> {
+    pub fn update_lock(&mut self, env: &Option<String>) -> Result<()> {
         let e: String = match env {
             Some(v) => v.to_string(),
             None => self.config.default_env.to_string(),
@@ -287,7 +295,8 @@ impl Workspace {
         )?;
 
         let default = self.config.env(&e)?.strategy.clone();
-        let mut lock_updates = Vec::new();
+        let mut lock_updates = BTreeMap::new();
+
         for project in self.projects() {
             let strategy = {
                 match &project.config.strategy {
@@ -295,16 +304,13 @@ impl Workspace {
                     None => &default,
                 }
             };
-            if let Some(input_spec) = strategy.update(project.flake_ref)? {
-                lock_updates.push((project.config.name.to_string(), input_spec));
-            } else {
-                // TODO: Log skipped input here
-            }
+            let metadata = strategy.update(project.flake_ref)?;
+            lock_updates.insert(project.config.name.to_string(), metadata);
         }
-        let lock = self.lock.get_mut(&e).unwrap();
-        for (project_name, input_spec) in lock_updates {
-            lock.add(&project_name, &input_spec)?;
-        }
+        let new_lock = LockFile::from_metadata(lock_updates)?;
+
+        self.lock.insert(e, new_lock);
+
         Ok(())
     }
 

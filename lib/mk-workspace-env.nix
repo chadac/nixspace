@@ -4,15 +4,14 @@
   cfg,
   projectCfg,
   lockFile,
-  local,
+  local ? null,
   impureRoot ? null,
-  # localFile ? src + "/.nixspace/local.json",
 }: let
   # TODO: Editable Projects MUST have a flake.lock
   lock = builtins.fromJSON (builtins.readFile lockFile);
 
   projects = builtins.mapAttrs (name: inputSpec:
-    if ((builtins.hasAttr name local.projects) && local.projects.${name}.editable)
+    if (local != null && (builtins.hasAttr name local.projects) && local.projects.${name}.editable)
     then builtins.fetchTree {
       type = "path";
       path = impureRoot + "/" + projectCfg.${name}.path;

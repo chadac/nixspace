@@ -1,0 +1,8 @@
+---
+source: src/cli.rs
+expression: "Nix::flake_prefetch(\"github:chadac/test-nixspace-nix-shared\")?"
+---
+FlakePrefetch {
+    hash: "sha256-63QmnF/dH5LsQXTfhncBcsOdMe/+Uc34N1JnmvNrvAk=",
+    store_path: "/nix/store/709kcnrbx04b4n2injvidqvlynvgxkhv-source",
+}

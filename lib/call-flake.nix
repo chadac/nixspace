@@ -47,11 +47,6 @@ let
             else
               getInputByPath
                 # Since this could be a 'follows' input, call resolveInput.
-                # Prefer resolving any inputs in our workspace first
-                # (if wsNodes ? ${nodeName}
-                #  then
-                #    (resolveInput wsNodes.${nodeName}.inputs.${builtins.head path})
-                #  else
                 (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
                 (builtins.tail path);
 

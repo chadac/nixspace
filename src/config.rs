@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, Context, Error, Result};
 use glob_match::glob_match;
@@ -16,7 +16,6 @@ pub struct Config {
 
     pub default_env: String,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum UpdateStrategy {
@@ -41,32 +40,34 @@ pub struct ProjectConfig {
     pub name: String,
     pub url: String,
     pub path: Option<PathBuf>,
-    pub strategy: Option<HashMap<String, UpdateStrategy>>,
+    pub strategy: Option<BTreeMap<String, UpdateStrategy>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LocalConfig {
-    pub projects: HashMap<String, bool>
+    pub projects: BTreeMap<String, LocalProjectConfig>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LocalProjectConfig {
+    pub editable: bool,
 }
 
 impl UpdateStrategy {
-    pub fn update(&self, flake_ref: Rc<dyn FlakeRef>) -> Result<Option<InputSpec>> {
+    pub fn update(&self, flake_ref: Rc<dyn FlakeRef>) -> Result<super::cli::FlakeMetadata> {
+        let mut new_ref = flake_ref.clone();
         if let Some(remote_url) = flake_ref.git_remote_url() {
-            if let Some(rev) = self.get_latest_rev(&remote_url)? {
-                let hash = Nix::flake_prefetch(&flake_ref.flake_url())?.hash;
-                let mut input_spec = InputSpec::from_flake_ref(flake_ref);
-                input_spec.rev = Some(rev);
-                input_spec.nar_hash = Some(hash);
-                Ok(Some(input_spec))
-            } else {
-                Ok(None)
+            if let Some(rev) = self.get_git_rev(&remote_url)? {
+                new_ref = flake_ref.with_rev(&rev);
             }
-        } else {
-            Ok(None)
         }
+        let metadata = Nix::flake_metadata(
+            &new_ref.flake_url()
+        )?;
+        Ok(metadata)
     }
 
-    fn get_latest_rev(&self, remote_url: &str) -> Result<Option<String>> {
+    fn get_git_rev(&self, remote_url: &str) -> Result<Option<String>> {
         match self {
             Self::Latest => {
                 let revs = Git::ls_remote(remote_url)?;
@@ -187,7 +188,7 @@ impl Config {
 impl LocalConfig {
     pub fn new() -> Self {
         LocalConfig {
-            projects: HashMap::new(),
+            projects: BTreeMap::new(),
         }
     }
 
@@ -203,7 +204,15 @@ impl LocalConfig {
 
     /// Returns if a project is editable by the project name
     pub fn is_editable(&self, project_name: &str) -> bool {
-        *self.projects.get(project_name).unwrap_or(&false)
+        self.projects.get(project_name).map(|p| p.editable).unwrap_or(false)
+    }
+
+    pub fn mark_editable(&mut self, project_name: &str) -> () {
+        self.projects.insert(project_name.to_string(), LocalProjectConfig { editable: true });
+    }
+
+    pub fn unmark_editable(&mut self, project_name: &str) -> () {
+        self.projects.insert(project_name.to_string(), LocalProjectConfig { editable: false });
     }
 }
 
@@ -239,7 +248,7 @@ mod tests {
                     name: "project-b".to_string(),
                     url: "github:chadac/project-b".to_string(),
                     path: Some(PathBuf::from("./subfolder/project-b")),
-                    strategy: Some(HashMap::from([
+                    strategy: Some(BTreeMap::from([
                         ("stage".to_string(), UpdateStrategy::Freeze),
                     ])),
                 },
@@ -247,6 +256,5 @@ mod tests {
             default_env: "dev".to_string(),
         };
         let repr = toml::to_string(&config).unwrap();
-        println!("{}", repr);
     }
 }

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, ExitStatus};
-use serde::{Deserialize};
+use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, bail, Context, Result};
+use colored::Colorize;
+
+use super::lockfile::{LockFile, InputSpec};
 
 #[derive(Debug, Clone)]
 pub struct CliError {
@@ -14,7 +17,7 @@ pub struct CliError {
 
 impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "cli error")
+        write!(f, "cli error:\n stderr: {0}\n stdout: {1}", self.stderr, self.stdout)
     }
 }
 
@@ -40,6 +43,15 @@ pub trait CliCommand {
         args: &[&str],
         cwd: &P
     ) -> Result<CliOutput> {
+        let cmd = Self::cmd();
+        let cwd_repr = cwd.as_ref().to_string_lossy();
+        let args_repr = args.join(" ");
+        log::info!(
+            "{} {} {} {args_repr}",
+            format!("{cwd_repr}/").yellow(),
+            "$".bold(),
+            cmd.green(),
+        );
         let output = Command::new(Self::cmd())
             .args(args)
             .stdout(std::process::Stdio::piped())
@@ -68,6 +80,24 @@ pub struct FlakePrefetch {
     pub hash: String,
     #[serde(rename = "storePath")]
     pub store_path: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FlakeMetadata {
+    pub description: Option<String>,
+    #[serde(rename = "lastModified")]
+    pub last_modified: i64,
+    pub locked: InputSpec,
+    pub locks: LockFile,
+    pub original: InputSpec,
+    #[serde(rename = "originalUrl")]
+    pub original_url: String,
+    pub path: String,
+    pub resolved: InputSpec,
+    #[serde(rename = "resolvedUrl")]
+    pub resolved_url: String,
+    pub revision: String,
+    pub url: String,
 }
 
 /// Minimal wrapper around the Nix CLI
@@ -100,8 +130,18 @@ impl Nix {
         let out: FlakePrefetch = serde_json::from_str(&result.stdout)?;
         Ok(out)
     }
+
+    pub fn flake_metadata(flake_url: &str) -> Result<FlakeMetadata> {
+        let result = Self::exec(
+            &["flake", "metadata", flake_url, "--json"],
+            &std::env::current_dir()?
+        )?;
+        let out: FlakeMetadata = serde_json::from_str(&result.stdout)?;
+        Ok(out)
+    }
 }
 
+#[derive(Serialize, Debug)]
 pub struct GitRef {
     pub rev: String,
     pub git_ref: String,
@@ -171,10 +211,10 @@ impl Git {
 
     pub fn ls_remote(remote_url: &str) -> Result<Vec<GitRef>> {
         let result = Self::exec(
-            &["ls-remote", "--sort='v:refname'", remote_url],
+            &["ls-remote", "--sort", "v:refname", remote_url],
             &std::env::current_dir()?
         )?;
-        let raw = result.stdout;
+        let raw = result.stdout.trim();
         let mut refs: Vec<GitRef> = Vec::new();
         for line in raw.split("\n") {
             let mut parts = line.split_whitespace();
@@ -186,5 +226,45 @@ impl Git {
             })
         }
         Ok(refs)
+    }
+
+}
+
+#[cfg(test)]
+mod nix_tests {
+    use super::*;
+    use insta::assert_debug_snapshot;
+
+    #[test]
+    #[ignore]
+    fn test_flake_prefetch() -> Result<()> {
+        assert_debug_snapshot!(
+            Nix::flake_prefetch("github:chadac/test-nixspace-nix-shared")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_flake_metadata() -> Result<()> {
+        assert_debug_snapshot!(
+            Nix::flake_metadata("github:chadac/test-nixspace-nix-shared")?
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod git_tests {
+    use super::*;
+    use insta::assert_debug_snapshot;
+
+    #[test]
+    #[ignore]
+    fn test_ls_remote() -> Result<()> {
+        assert_debug_snapshot!(
+            Git::ls_remote("https://github.com/chadac/test-nixspace-nix-shared")?
+        );
+        Ok(())
     }
 }

@@ -24,6 +24,8 @@ use std::path::Path;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[command(flatten)]
+    verbose: clap_verbosity_flag::Verbosity,
 }
 
 #[derive(Debug, Subcommand)]
@@ -53,11 +55,12 @@ enum Commands {
     /// erase a project from the workspace.
     Deregister(Deregister),
 
+    // LOCAL PROJECT COMMANDS
     /// link a project locally into the workspace;
     /// i.e., clone it and make it editable.
-    Add(Add),
+    Use(Use),
     /// unlink the project from the workspace
-    Rm(Rm),
+    Ignore(Ignore),
 
     // GIT MANAGEMENT
     /// pull the workspace config + lockfile from the upstream remote
@@ -293,12 +296,12 @@ impl Command for Deregister {
 }
 
 #[derive(Args, Debug)]
-struct Add {
+struct Use {
     /// path or reference to the project
     name: String,
 }
 
-impl Command for Add {
+impl Command for Use {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         ws.add(&self.name)?;
@@ -308,7 +311,7 @@ impl Command for Add {
 }
 
 #[derive(Args, Debug)]
-struct Rm {
+struct Ignore {
     /// name of the project
     name: String,
     /// if present, deletes the project locally
@@ -316,7 +319,7 @@ struct Rm {
     rm: bool
 }
 
-impl Command for Rm {
+impl Command for Ignore {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         ws.rm(&self.name, self.rm)?;
@@ -360,8 +363,6 @@ impl Command for Publish {
 
 #[derive(Args, Debug)]
 struct Update {
-    /// path or flake reference to the project.
-    path_or_ref: Vec<String>,
     /// environment to update
     env: Option<String>,
     /// if present, publishes the new lockfile to the Git repository
@@ -372,7 +373,7 @@ struct Update {
 impl Command for Update {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.update_lock(&self.env, &self.path_or_ref)?;
+        ws.update_lock(&self.env)?;
         ws.save()?;
         if self.publish {
             if ws.tracks_latest()? {
@@ -407,9 +408,8 @@ impl NixArgs {
     }
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    match &cli.command {
+fn exec(command: &Commands) -> Result<()> {
+    match command {
         Commands::Init(cmd) => cmd.run(),
         Commands::Clone(cmd) => cmd.run(),
         Commands::Show(cmd) => cmd.run(),
@@ -420,8 +420,8 @@ fn main() -> Result<()> {
         Commands::Register(cmd) => cmd.run(),
         Commands::Deregister(cmd) => cmd.run(),
 
-        Commands::Add(cmd) => cmd.run(),
-        Commands::Rm(cmd) => cmd.run(),
+        Commands::Use(cmd) => cmd.run(),
+        Commands::Ignore(cmd) => cmd.run(),
 
         Commands::Sync(cmd) => cmd.run(),
         Commands::Publish(cmd) => cmd.run(),
@@ -430,6 +430,37 @@ fn main() -> Result<()> {
         Commands::Build(nix) => nix.run("build"),
         Commands::Run(nix) => nix.run("run"),
         Commands::Flake(nix) => nix.run("flake"),
-    }.unwrap();
+    }?;
     Ok(())
+}
+
+fn main() -> () {
+    let cli = Cli::parse();
+    if let Some(v) = cli.verbose.log_level() {
+        let filter = v.to_level_filter();
+        let config = simplelog::ConfigBuilder::new()
+            .set_time_level(log::LevelFilter::Off)
+            .set_thread_level(log::LevelFilter::Off)
+            .build();
+
+        simplelog::CombinedLogger::init(
+            vec![
+                simplelog::TermLogger::new(filter, config, simplelog::TerminalMode::Mixed, simplelog::ColorChoice::Auto),
+            ]
+        ).unwrap();
+
+        // capture the backtrace if we're at trace level
+        if v >= log::Level::Trace {
+            std::env::set_var("RUST_BACKTRACE", "1");
+        }
+    }
+
+    match exec(&cli.command) {
+        Ok(()) => (),
+        Err(e) => {
+            log::error!("{e}");
+            log::trace!("backtrace:\n{}", e.backtrace());
+            std::process::exit(0x0100);
+        },
+    }
 }

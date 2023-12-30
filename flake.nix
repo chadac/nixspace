@@ -38,6 +38,7 @@
             cargo
             rustc
             cargo-watch
+            cargo-insta
             clippy
           ];
         };

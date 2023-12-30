@@ -1,9 +1,20 @@
 { lib, stdenv, rustPlatform }:
+let
+  fs = lib.fileset;
+in
 rustPlatform.buildRustPackage {
   pname = "nixspace";
   version = "1.0.0";
 
-  src = lib.cleanSource ./.;
+  src = fs.toSource {
+    root = ./.;
+    fileset = fs.unions [
+      ./Cargo.toml
+      ./Cargo.lock
+      ./src
+    ];
+  };
+
   cargoLock = {
     lockFile = ./Cargo.lock;
   };

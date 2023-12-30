@@ -10,7 +10,7 @@ rec {
     inherit lib callFlake;
   };
   mkWorkspace = import ./mk-workspace.nix {
-    inherit lib callFlake mkWorkspaceEnv;
+    inherit self lib callFlake mkWorkspaceEnv;
   };
   inherit revInfo;
 }

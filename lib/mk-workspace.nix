@@ -1,4 +1,4 @@
-{ lib, callFlake, mkWorkspaceEnv }:
+{ self, lib, callFlake, mkWorkspaceEnv }:
 {
   src,
   inputs,
@@ -8,7 +8,6 @@
   cfg = builtins.fromTOML (builtins.readFile cfgFile);
 
   envNames = map (env: env.name) cfg.environments;
-
 
   # get the impure workspace root from the environment
   # used for loading editable packages
@@ -25,32 +24,23 @@
     cfg.projects
   );
 
-  env = map (env: mkWorkspaceEnv {
-    inherit inputs cfg projectCfg local impureRoot;
-    lockFile = src + "/.nixspace/${env}.lock";
-  }) envNames;
-  ws = {
-    inherit env cfg local;
-    default = cfg.default_env;
-  };
-in ws // {
-  flakeModule = { ... }: {
-    flake = {
-      lib.nixspace = ws;
+  envs = builtins.listToAttrs (map (env: {
+    name = env;
+    value = mkWorkspaceEnv {
+      inherit inputs cfg projectCfg local impureRoot;
+      lockFile = src + "/.nixspace/${env}.lock";
     };
-    perSystem = { pkgs, ... }: let
-      nixspace = pkgs.callPackage ../. { };
-    in {
-      # TODO: add consumer/dependent flake resolution
-      # apps = {
-      #   ns-consumers = import ./ns-consumers.nix lib ws;
-      #   ns-dependents = import ./ns-dependents.nix lib ws;
-      # };
-      devShells.default = pkgs.mkShell {
-        packages = [
-          nixspace
-        ];
+  }) envNames);
+
+  ws = builtins.mapAttrs (name: env: env // {
+    flakeModule = { ... }: {
+      _module.args.env = name;
+
+      perSystem = { pkgs, system, ... }: {
+        devShells.default = pkgs.mkShell {
+          packages = [ self.packages.${system}.nixspace ];
+        };
       };
     };
-  };
-}
+  }) envs;
+in ws // { default = ws.${cfg.default_env}; }
