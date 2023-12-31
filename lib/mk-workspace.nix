@@ -2,8 +2,10 @@
 {
   src,
   inputs,
+  systems,
   cfgFile ? src + "/nixspace.toml",
   localFile ? src + "/.nixspace/local.json",
+  flattenFlakes ? null,
 }: let
   cfg = builtins.fromTOML (builtins.readFile cfgFile);
 
@@ -32,9 +34,87 @@
     };
   }) envNames);
 
-  ws = builtins.mapAttrs (name: env: env // {
-    flakeModule = { ... }: {
+  flatten =
+    if(flattenFlakes != null) then flattenFlakes
+    else if(builtins.hasAttr "flatten-flakes" cfg) then cfg.flatten-flakes
+    else true;
+
+  canFlatten = projectName: project:
+    !builtins.hasAttr "flatten" projectCfg.${projectName} || projectCfg.${projectName}.flatten;
+
+  flattenProject = flakeSection: projectName: project:
+    if (project ? flakeSection) then
+      lib.concatMapAttrs (name: value: {
+        "${projectName}/${name}" = value;
+      }) project.${flakeSection}
+    else {}
+  ;
+
+  flattenSystemProject = flakeSection: system: projectName: project:
+    if (builtins.hasAttr flakeSection project) then
+      lib.concatMapAttrs
+        (name: value: { "${projectName}/${name}" = value; })
+        project.${flakeSection}.${system}
+    else {}
+  ;
+
+  listToAttrs = list: builtins.listToAttrs (builtins.map (name: { inherit name; value = {}; }) list);
+  flakeSystem = listToAttrs [ "packages" "apps" "devShells" "legacyPackages" "checks" ];
+  flakeGeneral = listToAttrs [ "overlays" "nixosModules" ];
+
+  flattenModule = projectName: project: { lib, env, ... }: {
+    flake = lib.mkIf flatten (
+      lib.mapAttrs
+        (flakeSection: _: flattenProject flakeSection projectName project)
+        flakeGeneral
+    );
+
+    perSystem = lib.mkIf flatten ({ system, ... }:
+      lib.mapAttrs
+        (flakeSection: _: flattenSystemProject flakeSection system projectName project)
+        flakeSystem
+    );
+  };
+
+  ws = builtins.mapAttrs (name: projects: let
+    mkNsDevShell = pkgs: pkgs.mkShell {
+      packages = [ self.packages.${pkgs.system}.nixspace ];
+    };
+    flattenProjects = lib.filterAttrs canFlatten projects;
+  in projects // {
+    inherit name;
+    inherit projects;
+
+    flake = let
+      forAllSystems = lib.genAttrs systems;
+      forAllProjects = flakeSection: _:
+        lib.concatMapAttrs (flattenProject flakeSection) flattenProjects;
+      forAllProjectsSystems = flakeSection: _:
+        forAllSystems (system:
+          lib.concatMapAttrs (flattenSystemProject flakeSection system) flattenProjects
+        );
+      f =
+        if flatten then
+          (lib.mapAttrs forAllProjectsSystems flakeSystem) //
+          (lib.mapAttrs forAllProjects flakeGeneral)
+        else { devShells = forAllSystems (system: { }); };
+      devShells = forAllSystems (system:
+        let pkgs = import inputs.nixpkgs { inherit system; };
+        in { default = pkgs.mkShell { packages = [ self.packages.${system}.nixspace ]; }; }
+      );
+    in f // {
+      devShells = lib.mapAttrs (system: shells:
+        shells // devShells.${system}
+      ) f.devShells;
+    };
+
+    # for use in flake-parts
+    flakeModule = { ... }: let {
       _module.args.env = name;
+
+      inherit systems;
+
+      imports = lib.attrValues (lib.mapAttrs flattenModule flattenProjects);
 
       perSystem = { pkgs, system, ... }: {
         devShells.default = pkgs.mkShell {
