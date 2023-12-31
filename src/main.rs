@@ -53,14 +53,14 @@ enum Commands {
     /// import a project to the workspace.
     Register(Register),
     /// erase a project from the workspace.
-    Deregister(Deregister),
+    Unregister(Unregister),
 
     // LOCAL PROJECT COMMANDS
     /// link a project locally into the workspace;
     /// i.e., clone it and make it editable.
-    Use(Use),
+    Edit(Edit),
     /// unlink the project from the workspace
-    Ignore(Ignore),
+    Unedit(Unedit),
 
     // GIT MANAGEMENT
     /// pull the workspace config + lockfile from the upstream remote
@@ -75,7 +75,6 @@ enum Commands {
     // NIX ALIASES
     Build(NixArgs),
     Run(NixArgs),
-    Flake(NixArgs),
 }
 
 trait Command {
@@ -269,7 +268,7 @@ impl Command for Register {
         let project = ws.register(&name, flake_ref, &self.path)?;
 
         if self.edit {
-            ws.add(&name)?;
+            ws.edit(&name)?;
         }
 
         ws.save()?;
@@ -278,7 +277,7 @@ impl Command for Register {
 }
 
 #[derive(Args, Debug)]
-struct Deregister {
+struct Unregister {
     /// identifier for the project
     name: String,
     #[arg(long)]
@@ -286,7 +285,7 @@ struct Deregister {
     delete: bool,
 }
 
-impl Command for Deregister {
+impl Command for Unregister {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         ws.deregister(&self.name, self.delete)?;
@@ -296,22 +295,22 @@ impl Command for Deregister {
 }
 
 #[derive(Args, Debug)]
-struct Use {
-    /// path or reference to the project
+struct Edit {
+    /// name of the project
     name: String,
 }
 
-impl Command for Use {
+impl Command for Edit {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.add(&self.name)?;
+        ws.edit(&self.name)?;
         ws.save()?;
         Ok(())
     }
 }
 
 #[derive(Args, Debug)]
-struct Ignore {
+struct Unedit {
     /// name of the project
     name: String,
     /// if present, deletes the project locally
@@ -319,10 +318,10 @@ struct Ignore {
     rm: bool
 }
 
-impl Command for Ignore {
+impl Command for Unedit {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.rm(&self.name, self.rm)?;
+        ws.unedit(&self.name, self.rm)?;
         ws.save()?;
         Ok(())
     }
@@ -373,7 +372,7 @@ struct Update {
 impl Command for Update {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.update_lock(&self.env)?;
+        ws.update_all_projects(&self.env)?;
         ws.save()?;
         if self.publish {
             if ws.tracks_latest()? {
@@ -381,7 +380,7 @@ impl Command for Update {
                 ws.publish(false)?;
             }
             else {
-                bail!("cannot commit; upstream is ahead of local git repository.")
+                bail!("cannot commit; upstream is ahead of local git repository.");
             }
         }
         Ok(())
@@ -418,10 +417,10 @@ fn exec(command: &Commands) -> Result<()> {
         Commands::Env(cmd) => cmd.run(),
 
         Commands::Register(cmd) => cmd.run(),
-        Commands::Deregister(cmd) => cmd.run(),
+        Commands::Unregister(cmd) => cmd.run(),
 
-        Commands::Use(cmd) => cmd.run(),
-        Commands::Ignore(cmd) => cmd.run(),
+        Commands::Edit(cmd) => cmd.run(),
+        Commands::Unedit(cmd) => cmd.run(),
 
         Commands::Sync(cmd) => cmd.run(),
         Commands::Publish(cmd) => cmd.run(),
@@ -429,7 +428,6 @@ fn exec(command: &Commands) -> Result<()> {
 
         Commands::Build(nix) => nix.run("build"),
         Commands::Run(nix) => nix.run("run"),
-        Commands::Flake(nix) => nix.run("flake"),
     }?;
     Ok(())
 }

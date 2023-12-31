@@ -2,6 +2,7 @@ use anyhow::{anyhow, bail, Context, Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use colored::Colorize;
 
 use super::flake::FlakeRef;
 use super::lockfile::LockFile;
@@ -163,11 +164,6 @@ impl Workspace {
 
     /// pushes any new commits from the workspace
     pub fn publish(&self, force: bool) -> Result<()> {
-        for file in self.files() {
-            Git::add(&file)?;
-        }
-        // TODO: This should be more descriptive
-        Git::commit("chore: update workspace", &self.root)?;
         Git::push(&self.root)?;
         Ok(())
     }
@@ -175,19 +171,6 @@ impl Workspace {
     pub fn project(&self, name: &str) -> Result<ProjectRef> {
         ProjectRef::find(self, name)
     }
-
-    // pub fn project(&self, path_or_ref: &str) -> Result<Option<ProjectRef>> {
-    //     let flake_ref = super::flake::parse(path_or_ref)?;
-    //     if let Some(project_config) = self.config.get_project_by_flake_ref(flake_ref.clone()) {
-    //         Ok(Some(ProjectRef {
-    //             flake_ref: flake_ref,
-    //             config: &project_config,
-    //             editable: self.local.is_editable(&project_config.name),
-    //         }))
-    //     } else {
-    //         Ok(None)
-    //     }
-    // }
 
     pub fn projects(&self) -> Vec<ProjectRef> {
         let mut projects = Vec::new();
@@ -218,7 +201,10 @@ impl Workspace {
         if delete {
             let project = self.project(name)?;
             if let Some(p) = &project.config.path {
+                log::info!("removing directory '{:?}'", p.clone().into_os_string());
                 std::fs::remove_dir_all(&p)?;
+            } else {
+                log::warn!("project has no path registered, you may need to manually delete the project");
             }
         }
 
@@ -239,16 +225,34 @@ impl Workspace {
     }
 
     pub fn print_tree(&self) -> () {
-        todo!()
+        let mut paths = self.projects().iter()
+            .map(|p| {
+                match p.config.path.as_ref() {
+                    Some(path) => Some((path, p.config.url.to_string(), p.editable)),
+                    None => None,
+                }
+            })
+            .flatten()
+            .map(|(path, url, e)| (path.to_string_lossy().to_string(), url, e))
+            .collect::<Vec<_>>();
+        paths.sort();
+        for (path, url, editable) in &paths {
+            println!(
+                "{:030} {}",
+                path.bold(),
+                if *editable { url.green() } else { url.red() }
+            );
+        }
     }
 
-    /// Clones a project locally
-    pub fn add(&mut self, name: &str) -> Result<()> {
+    /// Uses the local copy of a project for building.
+    pub fn edit(&mut self, name: &str) -> Result<()> {
         let project = self.project(name)?;
         if project.config.path.is_none() {
             bail!("cannot use project with no configured local path. see `ns project --help`");
         }
         let path = project.config.path.as_ref().unwrap();
+
         if !path.exists() {
            Nix::clone(
                &project.flake_ref.flake_url(),
@@ -256,15 +260,17 @@ impl Workspace {
                "."
            )?;
         }
+
         if self.local.is_editable(&name) {
             bail!("project {0} is already marked as editable; exiting", project.config.name);
         }
+
         self.mark_editable(&name);
         Ok(())
     }
 
     /// Removes a project from being tracked locally
-    pub fn rm(&mut self, name: &str, delete: bool) -> Result<()> {
+    pub fn unedit(&mut self, name: &str, delete: bool) -> Result<()> {
         self.unmark_editable(name);
 
         if delete {
@@ -285,7 +291,7 @@ impl Workspace {
         self.local.unmark_editable(project_name);
     }
 
-    pub fn update_lock(&mut self, env: &Option<String>) -> Result<()> {
+    pub fn update_all_projects(&mut self, env: &Option<String>) -> Result<()> {
         let e: String = match env {
             Some(v) => v.to_string(),
             None => self.config.default_env.to_string(),
@@ -323,6 +329,11 @@ impl Workspace {
         }
         Git::commit(commit_message, &self.root)?;
         Ok(())
+    }
+
+    /// Returns the current project that a user is within.
+    pub fn context(&self) -> Result<Option<ProjectRef>> {
+        todo!()
     }
 }
 

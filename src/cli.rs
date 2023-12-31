@@ -193,7 +193,7 @@ impl Git {
 
     pub fn add<P: AsRef<Path> + ?Sized>(file_path: &P) -> Result<CliOutput> {
         let (cwd, filename) = get_git_context(file_path)?;
-        Self::exec(&["add", &filename], &cwd)
+        Self::exec(&["add", "-f", &filename], &cwd)
     }
 
     pub fn rm<P: AsRef<Path> + ?Sized>(file_path: &P) -> Result<CliOutput> {

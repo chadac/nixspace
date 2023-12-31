@@ -133,6 +133,7 @@ impl LockedRef {
 }
 
 impl LockFile {
+    /// Combines a set of independent lockfiles into a joint lockfile.
     fn merge(lockfiles: &BTreeMap<String, LockFile>) -> Result<LockFile> {
         let mut l: BTreeMap<String, LockFile> = lockfiles.clone();
 
@@ -197,6 +198,7 @@ impl LockFile {
         Ok(lockfile)
     }
 
+    /// Builds a lockfile from a set of nodes.
     fn from_nodes(nodes: Nodes) -> Self {
         let mut new_nodes: Nodes = nodes
             .into_iter()
@@ -216,6 +218,7 @@ impl LockFile {
         Self::from_nodes(BTreeMap::new())
     }
 
+    /// Generates a lockfile by merging many metadata entries together.
     pub fn from_metadata(projects: BTreeMap<String, super::cli::FlakeMetadata>) -> Result<Self> {
         let lockfiles: BTreeMap<String, LockFile> = BTreeMap::from_iter(
             projects.iter().map(|(n, m)| (n.to_string(), m.locks.clone()))
@@ -232,16 +235,19 @@ impl LockFile {
         Ok(lockfile)
     }
 
+    /// Read to a JSON file
     pub fn read(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str::<LockFile>(&contents)?)
     }
 
+    /// Write to a JSON file
     pub fn write(&self, path: &Path) -> Result<()> {
         std::fs::write(path, serde_json::to_string(&self)?)?;
         Ok(())
     }
 
+    /// Get the root node of the lockfile.
     fn root_node(self) -> Result<LockedRef> {
         self.nodes.get(&self.root).map(|n| n.clone())
             .context("lockfile is missing root node! improperly formatted?")
@@ -251,6 +257,10 @@ impl LockFile {
         self.nodes.get(name).map(|r| r.locked.clone()).flatten()
     }
 
+    /// Resolves the paths that Nix flakes use.
+    ///
+    /// Copies a bit of the callFlake pattern included in the core Nix repo just
+    /// to ensure it's functionally identical.
     fn resolve_input(&self, input_path: &InputRef) -> String {
         match input_path {
             InputRef::Direct(i) => i.to_string(),
@@ -265,6 +275,7 @@ impl LockFile {
         }
     }
 
+    /// Parses the input ref path to get the input name of a reference.
     fn get_input_by_path(&self, node_name: &String, path: &Vec<String>) -> String {
         if path.is_empty() {
             node_name.to_string()
@@ -279,50 +290,17 @@ impl LockFile {
         }
     }
 
-    // fn resolve_input_ref(&self, node: Option<String>, input_path: &InputRef) -> Result<String> {
-    //     let node_inputs_empty = BTreeMap::new();
-    //     let inputs: BTreeMap<String, String> = match node {
-    //         None => self.nodes.keys().map(|k| (k.to_string(), k.to_string())).collect(),
-    //         Some(ref n) => {
-    //             let node_1 = self.nodes.get(n);
-    //             let node = node_1.as_ref()
-    //                 .with_context(|| anyhow!("could not resolve node with name '{n}'; improperly formatted lockfile?"))?;
-    //             let node_inputs = node.inputs.as_ref().unwrap_or(&node_inputs_empty);
-    //             node_inputs.iter().map(|(k, v)| (k.to_string(), v.head())).collect()
-    //         },
-    //     };
-    //     match input_path {
-    //         InputRef::Direct(i) => {
-    //             inputs.get(i)
-    //                 .map(|s| s.to_string())
-    //                 .with_context(|| anyhow!("could not resolve node with name '{i}'; improperly formatted lockfile?"))
-    //         },
-    //         InputRef::Path(p) => {
-    //             let (head, tail) = p.split_at(1);
-    //             if let Some(h) = head.first() {
-    //                 let (h2, t2) = Vec::from(tail).split_at(1);
-    //                 let parent = self.resolve_input_ref(Some(h.to_string()), );
-    //                 let rest = &InputRef::Path(Vec::from(tail));
-    //             } else {
-    //                 node.with_context(||
-    //                     anyhow!("should be unreachable??")
-    //                 )
-    //             }
-    //         },
+    // pub fn add(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
+    //     let p = self.nodes.get_mut(name)
+    //         .ok_or(anyhow!("could not find project '{}'", name))?;
+    //     p.locked = Some(new_input_spec.clone());
+    //     let root = self.nodes.get_mut(&self.root)
+    //         .context("failed parsing lockfile: missing entry 'root' in nodes")?;
+    //     if let Some(ref mut inputs) = root.inputs {
+    //         inputs.insert(name.to_string(), InputRef::Direct(name.to_string()));
     //     }
+    //     Ok(())
     // }
-
-    pub fn add(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
-        let p = self.nodes.get_mut(name)
-            .ok_or(anyhow!("could not find project '{}'", name))?;
-        p.locked = Some(new_input_spec.clone());
-        let root = self.nodes.get_mut(&self.root)
-            .context("failed parsing lockfile: missing entry 'root' in nodes")?;
-        if let Some(ref mut inputs) = root.inputs {
-            inputs.insert(name.to_string(), InputRef::Direct(name.to_string()));
-        }
-        Ok(())
-    }
 
     pub fn rm(&mut self, name: &str) -> Result<()> {
         self.nodes.remove(name);
@@ -331,9 +309,11 @@ impl LockFile {
         if let Some(ref mut inputs) = root.inputs {
             inputs.remove(name);
         }
+        self.trim()?;
         Ok(())
     }
 
+    /// Renames a node.
     pub fn rename_input(&mut self, input_name: &str, new_name: &str) -> () {
         if !self.nodes.contains_key(input_name) {
             return
@@ -349,6 +329,9 @@ impl LockFile {
         self.nodes.retain(|n, _| n != input_name);
     }
 
+    /// Grabs all nodes in the lockfile that are attached to the root.
+    ///
+    /// Useful for cleaning up the lockfile after updates.
     fn closure(&self) -> Result<HashSet<String>> {
         let mut queue = Vec::from(&[ self.root.to_string() ]);
         let mut visited = HashSet::new();
@@ -362,7 +345,6 @@ impl LockFile {
             if let Some(i) = &node.inputs {
                 for input_ref in i.values() {
                     let next_input = self.resolve_input(&input_ref);
-                    println!("{node_name} {next_input}");
                     if !visited.contains(&next_input) {
                         queue.push(next_input);
                     }
@@ -373,6 +355,7 @@ impl LockFile {
         Ok(visited)
     }
 
+    /// Remove all nodes from the lockfile that are not attached to the root.
     pub fn trim(&mut self) -> Result<()> {
         let keep = self.closure()?;
         let mut remove: Vec<String> = self.nodes.iter().map(|(n, _)| n.to_string()).collect();
@@ -387,31 +370,6 @@ impl LockFile {
 impl InputSpec {
     pub fn from_flake_ref(flake_ref: Rc<dyn FlakeRef>) -> Self {
         flake_ref.input_spec()
-        // let args = flake_ref.args().into_iter().collect::<HashMap<String, String>>();
-        // InputSpec {
-        //     flake_type: flake_ref.flake_type.clone(),
-        //     nar_hash: None,
-        //     url: Some(flake_ref.url().to_string()),
-        //     owner: flake_ref.owner(),
-        //     repo: flake_ref.repo(),
-        //     dir: flake_ref.arg("dir"),
-        //     rev: flake_ref.arg("rev"),
-        //     git_ref: Some(flake_ref.arg("ref").unwrap_or("HEAD".to_string())),
-        //     rev_count: None,
-        //     last_modified: None,
-        // }
-    }
-
-    pub fn nix_path(&self) -> Result<String> {
-        todo!()
-    }
-
-    pub fn build(&self) -> Result<()> {
-        todo!()
-    }
-
-    pub fn inputs(&self) -> Result<String> {
-        todo!()
     }
 }
 
@@ -421,8 +379,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lockfile_add_succeeds() -> Result<()> {
-
+    fn add_succeeds() -> Result<()> {
         Ok(())
     }
 }
