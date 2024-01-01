@@ -333,7 +333,16 @@ impl Workspace {
 
     /// Returns the current project that a user is within.
     pub fn context(&self) -> Result<Option<ProjectRef>> {
-        todo!()
+        let cwd = std::env::current_dir()?;
+        for project in self.projects() {
+            if let Some(subpath) = &project.config.path {
+                let path = self.root.join(subpath);
+                if cwd.starts_with(path) {
+                    return Ok(Some(project))
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

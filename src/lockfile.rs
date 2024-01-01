@@ -192,7 +192,6 @@ impl LockFile {
             root: "root".to_string(),
             version: 7,
         };
-        println!("{:?}", lockfile.nodes.keys());
         lockfile.trim()?;
 
         Ok(lockfile)
@@ -224,7 +223,6 @@ impl LockFile {
             projects.iter().map(|(n, m)| (n.to_string(), m.locks.clone()))
         );
         let mut lockfile = Self::merge(&lockfiles)?;
-        println!("{:?}", lockfile.nodes.keys());
         for (name, metadata) in projects {
             let node = lockfile.nodes.get_mut(&name).with_context(
                 || anyhow!("project '{name}' was missing during merge; badly formatted lockfile?")
@@ -289,18 +287,6 @@ impl LockFile {
             )
         }
     }
-
-    // pub fn add(&mut self, name: &str, new_input_spec: &InputSpec) -> Result<()> {
-    //     let p = self.nodes.get_mut(name)
-    //         .ok_or(anyhow!("could not find project '{}'", name))?;
-    //     p.locked = Some(new_input_spec.clone());
-    //     let root = self.nodes.get_mut(&self.root)
-    //         .context("failed parsing lockfile: missing entry 'root' in nodes")?;
-    //     if let Some(ref mut inputs) = root.inputs {
-    //         inputs.insert(name.to_string(), InputRef::Direct(name.to_string()));
-    //     }
-    //     Ok(())
-    // }
 
     pub fn rm(&mut self, name: &str) -> Result<()> {
         self.nodes.remove(name);

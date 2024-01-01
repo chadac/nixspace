@@ -37,43 +37,70 @@ enum Commands {
     Init(Init),
     /// clone a workspace
     Clone(Clone),
-    /// shows the layout of the current workspace.
+    /// show the layout of the workspace
     Show(Show),
 
     // SUBCOMMANDS
-    /// workspace configuration management
+    /// manage workspace configuration
     #[command(subcommand)]
     Config(ConfigSubcommand),
 
-    /// manage workspace environments
+    /// manage environments
     #[command(subcommand)]
     Env(EnvSubcommand),
 
     // PROJECT COMMANDS
-    /// import a project to the workspace.
+    /// import a project to the workspace
+    ///
+    /// Registers a project within the `nixspace.toml`.
     Register(Register),
-    /// erase a project from the workspace.
+    /// erase a project from the workspace
+    ///
+    /// Removes a project from the `nixspace.toml`.
     Unregister(Unregister),
 
     // LOCAL PROJECT COMMANDS
-    /// link a project locally into the workspace;
-    /// i.e., clone it and make it editable.
+    /// link a project to the workspace locally
+    ///
+    /// Use to interactively test local changes to a workspace. Clones the
+    /// project if it does not exist and then remotely updates.
     Edit(Edit),
     /// unlink the project from the workspace
+    ///
+    /// Disassociates the project from the workspace, meaning that future builds
+    /// use the locked version of the package rather than the local.
     Unedit(Unedit),
 
     // GIT MANAGEMENT
     /// pull the workspace config + lockfile from the upstream remote
+    ///
+    /// Alias for `git pull <remote> <main>
     Sync(Sync),
     /// publish the workspace config + lockfile to the upstream remote
+    ///
+    /// Alias for `git commit -m <message> && git push <remote> <main>`
     Publish(Publish),
 
     // LOCKFILE MANAGEMENT
     /// update the workspace lockfile
+    ///
+    /// Updates all projects in the workspace lockfile.
     Update(Update),
 
     // NIX ALIASES
+    /// alias for "nix build" executed from the workspace context
+    ///
+    /// When run within a project directory, will build the associated project
+    /// in the context of the workspace, allowing for seamless testing of changes.
+    ///
+    /// See `nix build --help` for any details on the nix command.
     Build(NixArgs),
+    /// alias for "nix run" executed from the workspace context
+    ///
+    /// When run within a project directory, will build the associated project
+    /// in the context of the workspace, allowing for seamless testing of changes.
+    ///
+    /// See `nix run --help` for any details on the nix command.
     Run(NixArgs),
 }
 
@@ -394,14 +421,58 @@ struct NixArgs {
 }
 
 impl NixArgs {
+    fn target(&self) -> Option<(String, String)> {
+        self.args.iter()
+            .find(|arg| !arg.starts_with("-") && arg.contains("#"))
+            .map(|arg| {
+                let mut split = arg.splitn(2, "#");
+                (split.next().unwrap().to_string(), split.next().unwrap().to_string())
+            })
+    }
+
+    fn args(&self, cmd: &str) -> Vec<String> {
+        let mut args = Vec::from(&[ cmd.to_string() ]).into_iter().chain(
+            self.args.clone().into_iter()
+        ).collect::<Vec<String>>();
+        if let Some((f, t)) = self.target() {
+            let target = format!("{f}#{t}");
+            let target_index = args.iter().position(|arg| *arg == target).unwrap();
+            args.remove(target_index);
+        }
+        args
+    }
+
     fn run(&self, cmd: &str) -> Result<()> {
-        let args: [&str; 1] = [ cmd ];
-        let rest = self.args.iter().map(|s| &**s).collect::<Vec<&str>>();
-        let new_args = args.iter().chain(rest.iter()).map(|s| *s).collect::<Vec<&str>>();
-        Nix::exec(
-            &new_args,
-            &Workspace::find_root(&std::env::current_dir()?)
-                .ok_or(anyhow!("Could not find workspace in current directory."))?,
+        let ws = Workspace::discover()?;
+        let mut target = self.target();
+        let mut args = self.args(cmd);
+        if !args.contains(&"--impure".to_string()) {
+            args.push("--impure".to_string());
+        }
+        if let Some(project) = ws.context()? {
+            if let Some((old_flake, old_target)) = target.clone() {
+                let new_target = match old_target.as_str() {
+                    "" => "default",
+                    s => s,
+                }.to_string();
+                if old_flake == "." {
+                    target = Some((
+                        // TODO: fix this panic
+                        format!("path:{}", std::fs::canonicalize(ws.root.clone())?.into_os_string().into_string().unwrap()),
+                        format!("{}/{}", project.config.name, new_target)
+                    ));
+                }
+            }
+            else {
+                bail!("could not figure out the target you're trying to run/build; malformatted command?")
+            }
+        }
+        if let Some((new_flake, new_target)) = target {
+            args.insert(1, format!("{}#{}", new_flake, new_target))
+        }
+        Nix::interactive(
+            &args.iter().map(|s| s.as_str()).collect::<Vec<_>>()[..],
+            &std::env::current_dir()?,
         )?;
         Ok(())
     }

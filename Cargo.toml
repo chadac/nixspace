@@ -8,6 +8,7 @@ anyhow = { version = "^1.0.75", features = ["backtrace"] }
 clap = { version = "^4.4.7", features = ["derive"] }
 clap-verbosity-flag = "^2.1.1"
 colored = "2.1.0"
+fake-tty = "0.3.1"
 glob-match = "^0.2.1"
 log = "^0.4.20"
 querystring = "^1.1.0"

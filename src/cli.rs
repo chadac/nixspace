@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, ExitStatus};
+use std::process::{Command, Stdio, Output, ExitStatus};
 use serde::{Serialize, Deserialize};
 use anyhow::{anyhow, bail, Context, Result};
 use colored::Colorize;
@@ -28,6 +28,58 @@ pub struct CliOutput {
 
 pub trait CliCommand {
     fn cmd() -> &'static str;
+
+    fn interactive<P: AsRef<Path> + ?Sized>(
+        args: &[&str],
+        cwd: &P
+    ) -> Result<()> {
+        let cmd = Self::cmd();
+        let cwd_repr = cwd.as_ref().to_string_lossy();
+        let args_repr = args.join(" ");
+        log::info!(
+            "{} {} {} {args_repr}",
+            format!("{cwd_repr}/").yellow(),
+            "$".bold(),
+            cmd.green(),
+        );
+        let term = match std::env::var("TERM") {
+            Ok(term) => term,
+            _ => "dumb".to_string(),
+        };
+        let command = format!(
+            "{} {}",
+            Self::cmd(),
+            args.join(" ")
+        );
+        let output = fake_tty::bash_command(&command)?
+            .stdout(Stdio::piped())
+            // TODO: fix stdin just in case
+            // .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // let mut stdin = output.stdin.ok_or(anyhow!("could not fetch stdin"))?;
+        // let stdin_thread = std::thread::spawn(move || {
+        //     std::io::copy(&mut std::io::stdin(), &mut stdin)
+        // });
+
+        let mut stdout = output.stdout.ok_or(anyhow!("could not fetch stdout"))?;
+        let stdout_thread = std::thread::spawn(move || {
+            std::io::copy(&mut stdout, &mut std::io::stdout())
+        });
+
+        let mut stderr = output.stderr.ok_or(anyhow!("could not fetch stderr"))?;
+        let stderr_thread = std::thread::spawn(move || {
+            std::io::copy(&mut stderr, &mut std::io::stderr())
+        });
+
+        // TODO: do something better than unwrap...
+        // stdin_thread.join().unwrap()?;
+        stdout_thread.join().unwrap()?;
+        stderr_thread.join().unwrap()?;
+
+        Ok(())
+    }
 
     fn run<P: AsRef<Path> + ?Sized>(
         args: &[&str],
