@@ -1,0 +1,6 @@
+projects = []
+default_env = "main"
+
+[[environments]]
+name = "main"
+strategy = "latest"

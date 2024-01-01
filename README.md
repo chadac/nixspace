@@ -27,15 +27,11 @@ flexible:
   deployment environments for environments that track rolling upgrades.
 * *Customized upgrades*: Specify on a project level how upgrades are
   consumed (follow branches, latest tags, semver, etc).
-* *Space-efficient*: Unlike `git` submodules, `nixspace` doesn't
-  require cloning down every project in a workspace. Developers can
-  `add` the projects they'd like to work on and test them in
-  integration in the workspace without pulling down all
-  packages. `nixspace` can scale to track the state of thousands of
-  applications at once.
-* *Composable dev environments*: `nixspace`s allow developers to
-  seamlessly compose the development environments of multiple projects
-  together.
+* *Clean*: Unlike `git` submodules, `nixspace` doesn't require cloning
+  down every project in a workspace. Developers can `add` the projects
+  they'd like to work on and test them in integration in the workspace
+  without pulling down all packages. `nixspace` can scale to track the
+  state of thousands of applications at once.
 
 ## How it works
 
@@ -50,12 +46,12 @@ flexible:
    utilities for maintaining and updating workspace lockfiles, as well as
    making it simple to edit any projects in the `nixspace`.
 
-A standard nixspace looks like:
+A standard workspace looks like:
 
     .
     ├── flake.nix              The nixspace flake.nix
     ├── flake.lock             Flake lockfile
-    ├── nixspace.yml           Nixspace configuration
+    ├── nixspace.toml          Nixspace configuration
     ├── .nixspace
     |   ├── prod.lock          Nixspace package lockfile (formatted like a standard Flake lockfile)
     |   ├── dev.lock           Nixspaces can manage multiple environments
@@ -68,112 +64,70 @@ A standard nixspace looks like:
     |   ├── project-c
     |   |   ├── flake.nix
 
-## Installation
+## Getting Started
+
+To start using the CLI, run:
 
     nix shell github:chadac/nixspace
 
-## Usage
+Create a new workspace with:
 
-### Initializing
+    ns init --name <your-workspace-name>
+    cd <your-workspace-name>
 
-Start a new workspace in an empty folder with:
+You may also use `ns init --type flake-parts --name
+<your-workspace-name>` to initialize a workspace with a `flake.nix`
+that [flake-parts](https://flake.parts/) compatible.
 
-    nix flake init github:chadac/nixspace
+### Registering and editing projects
 
-You may also run
+To add a new project to your workspace, run
 
-    nixspace init
+    ns register github:my/project --name my-project --path ./my-project
 
-### Adding
+This will register your project as part of the workspace -- now, any
+other projects that have an input named `my-project` in their
+`flake.nix` will use the workspace copy instead. Ensure that the name
+passed to `--name` is unique and distinguishible, as it is used to
+determine what input to replace in every project's `flake.nix`.
 
-Add new packages with:
+By default, projects added to a workspace are not *editable*. This
+means that they are initially not cloned into your workspace and are
+not locally editable.
 
-    nixspace add github:my/project
+To edit any project in the workspace, run
 
-`nixspace` scans the project for any co-dependencies and will
-automatically update the `workspace.toml` to properly follow any
-dependencies, so if `project-b` depends on `project-a`, `nixspace` will
-properly set up `project-b.inputs.project-a.follows = "project-b"`.
+    ns edit my-project
 
-### Sharing
+This will clone the project into the path specified in the `register`
+command, and will link the project to the workspace so that it is
+fully editable.
 
-Workspaces are git repositories, so if you commit and push the
-workspace, then others can clone it with:
+### Testing changes
 
-    nixspace clone github:my/workspace
+Suppose `my-project` is dependent on `shared-project`, and both are
+registered to the workspace and marked as editable. To test a local
+change in `shared-project` on `my-project`, you only need to navigate
+into `my-project` and run:
 
-#### Initializing projects
+    ns build .#my-package-or-app
 
-By default, `nixspace` clones all projects as stubs -- which means that
-while they are built and tested, they aren't directly editable until
-you explicitly **use** them.
-
-You can initialize a project in a workspace with
-
-    nixspace use project-a
-
-Syntax follows the expected folder path of the project:
-
-    nixspace use subfolder/project-c
-
-If you would like to clone all packages in a workspace in editable
-mode, run
-
-    nixspace clone github:my/workspace --use-all
-
-#### Updating projects
-
-To upgrade your `workspace.lock`, run
-
-    nixspace update
-
-This will update all projects to use the latest available commit.
-
-#### Syncing projects
-
-To update all projects in a workspace to use the current versions of
-each project that a workspace tracks, run
-
-    nixspace sync
-
-If you would like to implicitly update the workspace to follow the
-upstream, you may also run:
-
-    nixspace sync --remote
-
-#### Combined devshell
-
-If you want a workspace that combines many different devshells, simply
-add to your outputs:
-
-    devshells.default = nixspace.lib.mergedevshells projects { };
-
-Note that this is built for
-[github:numtide/devshell](https://github.com/numtide/devshell).
-
-### CI/CD
-
-`nixspace` projects can be a convenient means of deploying manyrepo
-applications in a joint, lockable format that is easy to audit.
-
-For example, with GitLab CI:
-
-    image: nixos/nix
-
-    build:
-        steps:
-            - nix build .#all.default
-
-    integ:
-        steps:
-            - nix run .#project-c.integ-tests
-
-    release:
-        steps:
-            - nix run .#project-c.deploy
+`ns` is a small alias for `nix` that replaces the project's
+flake-specific lock information with the workspace lock. Since `ns`
+runs in impure mode, editable projects are linked in their present,
+local state. Therefore, no other steps are needed -- you can
+immediately see the effects of one flake on another without any need
+for running `nix flake update` or pushing commits to a repository.
 
 ## TODO
 
+* *Test changes on all consumers*: It'd be nice to have something like
+  `ns build .# --all-consumers` that would run a build instead on
+  every package that depends on a flake. Sort of like a reverse
+  closure. Gotta write some Nix hacks to do this.
+* *Composable dev environments*: `nixspace`s allow developers to
+  seamlessly compose the development environments of multiple projects
+  together.
 * *Combined merge requests*: It'd be nice if we could automate
   generating merge requests across multiple repositories and linking
   them into a single deployment.

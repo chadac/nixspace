@@ -21,10 +21,13 @@
   local = if lib.inPureEvalMode then null
           else builtins.fromJSON (builtins.readFile "${impureRoot}/.nixspace/local.json");
 
-  projectCfg = builtins.listToAttrs (builtins.map
-    (project: { name = project.name; value = project; })
-    cfg.projects
-  );
+  projectCfg =
+    if (cfg ? "projects") then
+      builtins.listToAttrs (builtins.map
+        (project: { name = project.name; value = project; })
+        cfg.projects)
+    else {}
+  ;
 
   envs = builtins.listToAttrs (map (env: {
     name = env;
@@ -34,6 +37,7 @@
     };
   }) envNames);
 
+  empty = builtins.length (builtins.attrNames projectCfg) == 0;
   flatten =
     if(flattenFlakes != null) then flattenFlakes
     else if(builtins.hasAttr "flatten-flakes" cfg) then cfg.flatten-flakes
@@ -94,7 +98,7 @@
           lib.concatMapAttrs (flattenSystemProject flakeSection system) flattenProjects
         );
       f =
-        if flatten then
+        if !empty && flatten then
           (lib.mapAttrs forAllProjectsSystems flakeSystem) //
           (lib.mapAttrs forAllProjects flakeGeneral)
         else { devShells = forAllSystems (system: { }); };
@@ -109,7 +113,7 @@
     };
 
     # for use in flake-parts
-    flakeModule = { ... }: let {
+    flakeModule = { ... }: {
       _module.args.env = name;
 
       inherit systems;

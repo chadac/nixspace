@@ -22,6 +22,16 @@
           then " (nixpkgs-lib.rev: ${lib.rev})"
           else "";
       };
+      templates = {
+        basic = {
+          path = ./templates/basic;
+          description = "Barebones template with minimal dependencies.";
+        };
+        flake-parts = {
+          path = ./templates/flake-parts;
+          description = "Template for workspace flakes using flake-parts.";
+        };
+      };
     } // {
       packages = eachSystem (system: let
         pkgs = import nixpkgs { inherit system; };
