@@ -52,6 +52,7 @@ pub trait CliCommand {
             args.join(" ")
         );
         let output = fake_tty::bash_command(&command)?
+            .current_dir(cwd)
             .stdout(Stdio::piped())
             // TODO: fix stdin just in case
             // .stdin(Stdio::piped())
@@ -105,6 +106,7 @@ pub trait CliCommand {
             cmd.green(),
         );
         let output = Command::new(Self::cmd())
+            .current_dir(cwd)
             .args(args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

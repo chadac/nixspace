@@ -108,11 +108,19 @@ trait Command {
     fn run(&self) -> Result<()>;
 }
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum TemplateType {
+    Basic,
+    FlakeParts,
+}
+
 #[derive(Args, Debug)]
 struct Init {
     /// name of the workspace
     #[arg(short, long)]
     name: String,
+    #[arg(id = "type", short, long)]
+    template_type: Option<TemplateType>,
 }
 
 impl Command for Init {
@@ -121,11 +129,19 @@ impl Command for Init {
         if dir.exists() {
             bail!("error: path already exists");
         }
-        let cmd = ["flake", "init", "-t", "github:chadac/nix-ws"];
+        std::fs::create_dir(dir)?;
+        let target = match &self.template_type {
+            Some(TemplateType::Basic) => "github:chadac/nixspace#basic",
+            Some(TemplateType::FlakeParts) => "github:chadac/nixspace#flake-parts",
+            None => "github:chadac/nixspace",
+        };
+        let cmd = ["flake", "init", "-t", target];
         Nix::exec(&cmd, &dir)?;
         Git::init(&dir)?;
+        Git::add("flake.nix")?;
         let ws = Workspace::at(&dir)?;
         ws.commit("initial commit")?;
+        println!("workspace initialized at {} with {target}", self.name);
         Ok(())
     }
 }
@@ -299,6 +315,7 @@ impl Command for Register {
         }
 
         ws.save()?;
+
         Ok(())
     }
 }
