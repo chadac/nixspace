@@ -286,8 +286,8 @@ impl Command for EnvSubcommand {
 
 #[derive(Args, Debug)]
 struct Register {
-    /// path or reference to the project.
-    path_or_ref: String,
+    /// flake reference to the project; for example github:chadac/nixspace
+    url: String,
     /// name of the directory that the project will be cloned into when added.
     /// default is the name of the project at the root of the workspace.
     #[arg(short, long)]
@@ -304,7 +304,7 @@ struct Register {
 impl Command for Register {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        let flake_ref = flake::parse(&self.path_or_ref)?;
+        let flake_ref = flake::parse(&self.url)?;
         let name = self.name.as_ref().map(|s| s.to_string()).unwrap_or(
             flake_ref.infer_name().context("could not infer project name!")?
         );
@@ -314,8 +314,14 @@ impl Command for Register {
             ws.edit(&name)?;
         }
 
+        // update the lockfile
+        for env in ws.config.environments() {
+            ws.update_all_projects(&Some(env))?;
+        }
+
         ws.save()?;
 
+        println!("registered project {name} with url {}", self.url);
         Ok(())
     }
 }
@@ -333,7 +339,11 @@ impl Command for Unregister {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         ws.deregister(&self.name, self.delete)?;
+        for env in ws.config.environments() {
+            ws.update_all_projects(&Some(env))?;
+        }
         ws.save()?;
+        println!("removed {} from the workspace", self.name);
         Ok(())
     }
 }
@@ -549,4 +559,15 @@ fn main() -> () {
             std::process::exit(0x0100);
         },
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    // #[test]
+    // #[ignore]
+    // fn test_init() -> Result<()> {
+    //     Init { name: "test-workspace".to_string(), template_type: None }.run()
+    // }
 }
