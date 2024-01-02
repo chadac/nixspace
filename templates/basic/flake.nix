@@ -3,7 +3,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     systems.url = "github:nix-systems/default";
-    nixspace.url = "path:/home/chadac/code/github.com/chadac/nixspace";
+    nixspace.url = "github:chadac/nixspace";
   };
 
   outputs = { systems, nixspace, ... }@inputs: let

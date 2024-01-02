@@ -4,7 +4,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     systems.url = "github:nix-systems/default";
     flake-parts.url = "github:hercules-ci/flake-parts";
-    nixspace.url = "path:/home/chadac/code/github.com/chadac/nixspace";
+    nixspace.url = "github:chadac/nixspace";
   };
 
   outputs = { flake-parts, systems, nixspace, ... }@inputs: let
