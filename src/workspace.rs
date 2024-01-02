@@ -76,7 +76,7 @@ impl Workspace {
                         Err(e) => Err(anyhow!("error when attempting to read '{}': {e}", path.display())),
                     }
                 }).collect::<Result<BTreeMap<String, LockFile>, _>>()?,
-            local: LocalConfig::read(&root.join(LOCAL_PATH))?,
+            local: LocalConfig::read_or_new(&root.join(LOCAL_PATH))?,
         })
     }
 

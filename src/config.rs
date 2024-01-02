@@ -192,6 +192,14 @@ impl LocalConfig {
         }
     }
 
+    pub fn read_or_new(path: &Path) -> Result<Self> {
+        if path.exists() {
+            Self::read(path)
+        } else {
+            Ok(Self::new())
+        }
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str::<Self>(&contents)?)
