@@ -19,12 +19,14 @@
   projectNames = lib.attrNames projectCfg;
   lockNodes = lib.filterAttrs (name: node: name != "root") lock.nodes;
 
-  projects = builtins.mapAttrs (name: inputSpec:
+  projects = builtins.mapAttrs (name: inputSpec: let
+    impureSrc = impureRoot + "/" + projectCfg.${name}.path;
+  in
     if (local != null && (builtins.hasAttr name local.projects) && local.projects.${name}.editable)
-    then fetchFlake {
+    then (fetchFlake {
       type = "path";
-      path = impureRoot + "/" + projectCfg.${name}.path;
-    }
+      path = impureSrc;
+    } // { inherit impureSrc; })
     else fetchFlake inputSpec.locked
   ) lockNodes;
 
@@ -32,7 +34,10 @@
     inputs
     // (
       builtins.mapAttrs (name: tree: let
-        rootSrc = tree.outPath;
+        rootSrc = tree.impureSrc or tree.outPath;
+        passthru = {
+          root = rootSrc;
+        };
         projLock = rootSrc + "/flake.lock";
         lockFileStr =
           if (builtins.pathExists projLock)
@@ -40,7 +45,7 @@
           else ''{"nodes": {"root": {}}, "root": "root", "version": 7}''
         ;
       in
-        callFlake wsNodes lockFileStr tree tree.rootDirectory
+        (callFlake wsNodes lockFileStr tree tree.rootDirectory) // passthru
       ) projects
     )
   ;

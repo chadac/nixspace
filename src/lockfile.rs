@@ -80,7 +80,7 @@ pub enum FlakeType {
     GitLab,
     #[serde(rename = "sourcehut")]
     SourceHut,
-    #[serde(rename = "flake")]
+    #[serde(rename = "indirect")]
     Indirect,
 }
 

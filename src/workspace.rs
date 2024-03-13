@@ -186,6 +186,22 @@ impl Workspace {
         projects
     }
 
+    pub fn projects_with_paths(&self) -> Vec<ProjectRef> {
+        let mut projects = Vec::new();
+        for project in &self.config.projects {
+            if project.path.is_some() {
+                projects.push(
+                    ProjectRef {
+                        config: project,
+                        flake_ref: project.flake_ref().unwrap(),
+                        editable: self.local.is_editable(&project.name),
+                    }
+                );
+            }
+        }
+        projects
+    }
+
     pub fn register(&mut self, name: &str, flake_ref: Rc<dyn FlakeRef>, path: &Option<String>) -> Result<ProjectRef> {
         let config = self.config.add_project(name, flake_ref.as_ref(), path)?;
         self.local.unmark_editable(name);

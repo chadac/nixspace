@@ -17,13 +17,12 @@ let
           sourceInfo =
             if key == lockFile.root
             then rootSrc
-            else if (builtins.hasAttr key overrides)
-            then overrides.${key}
             else fetchTree (node.info or {} // removeAttrs node.locked ["dir"]);
 
           subdir = if key == lockFile.root then rootSubdir else node.locked.dir or "";
 
-          outPath = sourceInfo + ((if subdir == "" then "" else "/") + subdir);
+          # update outpath to use the impureSrc if it exists
+          outPath = (sourceInfo.impureSrc or sourceInfo.outPath) + ((if subdir == "" then "" else "/") + subdir);
 
           flake = import (outPath + "/flake.nix");
 
@@ -50,8 +49,7 @@ let
                 (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
                 (builtins.tail path);
 
-          outputs =
-            (flake.outputs (inputs // { self = result; }));
+          outputs = flake.outputs (inputs // { self = result; });
 
           result =
             outputs
@@ -69,7 +67,11 @@ let
             };
 
         in
-          if node.flake or true then
+          # if our key comes from somewhere else, we override it
+          if key != lockFile.root && builtins.hasAttr key overrides then
+            overrides.${key}
+          # otherwise default behavior
+          else if node.flake or true then
             assert builtins.isFunction flake.outputs;
             result
           else

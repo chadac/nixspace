@@ -17,6 +17,7 @@ use crate::lockfile::InputSpec;
 
 use anyhow::{anyhow, bail, Context, Error, Result};
 use clap::{Args, Parser, Subcommand};
+use colored::Colorize;
 use std::path::Path;
 
 #[derive(Parser)]
@@ -94,14 +95,21 @@ enum Commands {
     /// in the context of the workspace, allowing for seamless testing of changes.
     ///
     /// See `nix build --help` for any details on the nix command.
-    Build(NixArgs),
+    Build(NixTargetArgs),
     /// alias for "nix run" executed from the workspace context
     ///
     /// When run within a project directory, will build the associated project
     /// in the context of the workspace, allowing for seamless testing of changes.
     ///
     /// See `nix run --help` for any details on the nix command.
-    Run(NixArgs),
+    Run(NixTargetArgs),
+    /// alias for "nix develop" executed from the workspace context
+    ///
+    /// When run within a project directory, will build the associated project
+    /// in the context of the workspace, allowing for seamless testing of changes.
+    ///
+    /// See `nix develop --help` for any details on the nix command.
+    Develop(NixTargetArgs),
 }
 
 trait Command {
@@ -351,13 +359,32 @@ impl Command for Unregister {
 #[derive(Args, Debug)]
 struct Edit {
     /// name of the project
-    name: String,
+    name: Option<String>,
+    /// if present, makes all projects editable
+    #[arg(long)]
+    all: bool
 }
 
 impl Command for Edit {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.edit(&self.name)?;
+        if let Some(name) = &self.name {
+            ws.edit(&name)?;
+        } else if self.all {
+            let projects = ws.projects_with_paths().iter()
+                .filter(|p| !p.editable)
+                .map(|p| p.config.name.clone())
+                .collect::<Vec<String>>();
+            if projects.is_empty() {
+                bail!("all projects are already editable");
+            }
+            for project in projects {
+                ws.edit(&project)?;
+                println!("marked {} as editable", project.bold());
+            }
+        } else {
+            bail!("you must either specify a project name or pass --all");
+        }
         ws.save()?;
         Ok(())
     }
@@ -366,16 +393,30 @@ impl Command for Edit {
 #[derive(Args, Debug)]
 struct Unedit {
     /// name of the project
-    name: String,
+    name: Option<String>,
     /// if present, deletes the project locally
     #[arg(long)]
-    rm: bool
+    rm: bool,
+    /// if present, runs on all projects
+    #[arg(long)]
+    all: bool
 }
 
 impl Command for Unedit {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
-        ws.unedit(&self.name, self.rm)?;
+        if let Some(name) = &self.name {
+            ws.unedit(&name, self.rm)?;
+        } else if self.all {
+            let projects = ws.projects_with_paths().iter()
+                .map(|p| p.config.name.clone())
+                .collect::<Vec<String>>();
+            for project in projects {
+                ws.unedit(&project, self.rm)?;
+            }
+        } else {
+            bail!("you must either specify a project name or pass --all");
+        }
         ws.save()?;
         Ok(())
     }
@@ -442,12 +483,12 @@ impl Command for Update {
 }
 
 #[derive(Args, Debug)]
-struct NixArgs {
+struct NixTargetArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
     args: Vec<String>,
 }
 
-impl NixArgs {
+impl NixTargetArgs {
     fn target(&self) -> Option<(String, String)> {
         self.args.iter()
             .find(|arg| !arg.starts_with("-") && arg.contains("#"))
@@ -526,6 +567,7 @@ fn exec(command: &Commands) -> Result<()> {
 
         Commands::Build(nix) => nix.run("build"),
         Commands::Run(nix) => nix.run("run"),
+        Commands::Develop(nix) => nix.run("develop"),
     }?;
     Ok(())
 }
@@ -556,7 +598,7 @@ fn main() -> () {
         Err(e) => {
             log::error!("{e}");
             log::trace!("backtrace:\n{}", e.backtrace());
-            std::process::exit(0x0100);
+            std::process::exit(1);
         },
     }
 }
@@ -568,6 +610,6 @@ mod tests {
     // #[test]
     // #[ignore]
     // fn test_init() -> Result<()> {
-    //     Init { name: "test-workspace".to_string(), template_type: None }.run()
+    //     Init { name: "test-workspace".to_string(), template_type: None }.run();
     // }
 }
