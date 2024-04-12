@@ -305,9 +305,10 @@ impl Command for Register {
     fn run(&self) -> Result<()> {
         let mut ws = Workspace::discover()?;
         let flake_ref = flake::parse(&self.url)?;
-        let name = self.name.as_ref().map(|s| s.to_string()).unwrap_or(
-            flake_ref.infer_name().context("could not infer project name!")?
-        );
+        let name = match &self.name {
+            Some(n) => n.to_string(),
+            None => flake_ref.infer_name().context("could not infer project name!")?
+        };
         let project = ws.register(&name, flake_ref, &self.path)?;
 
         if self.edit {
